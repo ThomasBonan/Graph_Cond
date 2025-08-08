@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Diagramme Conditionnel Multi-Règles</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+  <h1>Diagramme Conditionnel Multi-Règles</h1>
+  <div style="margin-bottom: 20px;">
+  <button onclick="window.location.href='editor.html'">🛠️ Ouvrir l’Éditeur de Schéma</button>
+    </div>
+
+  <div id="controls">
+  <label for="import-gammes">📂 Importer un fichier gammes.js :</label>
+  <input type="file" id="import-gammes" accept=".js" />
+</div>
+
+  <svg id="graph" width="1200"></svg>
+
+  <div id="gamme-summary"></div>
+
+  <div style="margin-top: 10px;">
+  <button id="recenter-graph">🔄 Recentrer la vue</button>
+    </div>
+
+  <input type="file" id="importFile" style="display:none" />
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

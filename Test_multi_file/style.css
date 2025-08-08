@@ -1,0 +1,168 @@
+body {
+  font-family: sans-serif;
+  margin: 20px;
+  overflow-x: hidden;
+}
+
+#graph {
+  border: 1px solid #ccc;
+  background: #fafafa;
+}
+
+#preview {
+  background: #fafafa;
+}
+
+#sidebar {
+  width: 320px;              /* largeur fixe (ajuste si besoin) */
+  max-width: 100vw;
+  max-height: 260px;         /* <-- Limite la hauteur totale visible ! */
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #fff;
+  border-right: 1px solid #eee;
+  box-sizing: border-box;
+  padding: 0 8px 0 0;
+  position: relative;
+  margin-bottom: 18px;       /* Ajoute une petite marge avec la suite */
+}
+
+#group-tree {
+  min-width: 180px;
+  /* Tu peux ajuster ici la largeur mini des groupes */
+}
+
+.main-content {
+  margin-left: 330px; /* doit être >= à la largeur de la sidebar */
+  padding: 20px;
+}
+
+.node rect.main {
+  stroke: #333;
+  stroke-width: 1.5px;
+  fill: white;
+}
+
+.node text {
+  pointer-events: none;
+  font-size: 14px;
+}
+
+.node .status.selected {
+  fill: rgba(76, 175, 80, 0.5) !important;
+}
+
+.status.disabled {
+  fill: url(#diagonalHatch);
+}
+
+.status.normal {
+  fill: transparent;
+}
+
+.gamme-indicator rect {
+  width: 12px;
+  height: 12px;
+  stroke: #333;
+  stroke-width: 1px;
+}
+
+.gamme-indicator.included.PureBasic {
+  fill: #6d28d9;
+}
+.gamme-indicator.included.PureEnd {
+  fill: #2dd4bf;
+}
+.gamme-indicator.included.PureSmart {
+  fill: #4ade80;
+}
+
+.gamme-indicator.optional.PureBasic {
+  fill: url(#diagonalHatch);
+  stroke: #6d28d9;
+}
+.gamme-indicator.optional.PureEnd {
+  fill: url(#diagonalHatch);
+  stroke: #2dd4bf;
+}
+.gamme-indicator.optional.PureSmart {
+  fill: url(#diagonalHatch);
+  stroke: #4ade80;
+}
+
+.gamme-indicator.empty {
+  fill: white;
+}
+.gamme-indicator.disabled {
+  fill: #ccc;
+}
+.gamme-indicator {
+  stroke: #333;
+  stroke-width: 1px;
+}
+.gamme-indicator text {
+  font-size: 12px;
+  fill: #333;
+  pointer-events: none;
+}
+
+.status.blocked-require {
+  fill: rgba(33, 150, 243, 0.3); /* bleu clair */
+}
+
+.status.blocked-incompat {
+  fill: rgba(244, 67, 54, 0.3); /* rouge clair */
+}
+
+.group-title {
+  fill: #333;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 5px;
+}
+
+.group-box {
+  rx: 6;
+  ry: 6;
+  stroke-width: 2px;
+}
+
+.group {
+  border: 2px dashed #ccc;
+  padding: 10px;
+  margin: 10px;
+  position: absolute;
+  width: 200px;
+}
+
+.group.subgroup {
+  margin: 10px auto;
+  padding: 5px;
+  border: 1px dashed #bbb;
+  width: 90%;
+}
+
+.option {
+  border: 1px solid #333;
+  padding: 5px;
+  margin: 5px auto;
+  text-align: center;
+  width: 90%;
+}
+
+.option-label {
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+
+.option-bars {
+  display: flex;
+  justify-content: space-between;
+}
+
+.bar {
+  flex: 1;
+  height: 12px;
+  margin: 0 1px;
+}
+

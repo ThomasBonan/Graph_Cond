@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Diagramme Conditionnel Multi-Ruleset</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: sans-serif; }
+    .node rect { stroke: #666; stroke-width: 2px; cursor: pointer; }
+    .node text { pointer-events: none; font-size: 14px; }
+    .selected { fill: #4caf50 !important; }
+    .disabled { fill: #ccc !important; cursor: not-allowed; }
+    .link {
+        stroke: #aaa;
+        stroke-width: 1.5px;
+        marker-end: url(#arrow);
+    }
+    .link.requires {
+        stroke: #2196f3; /* bleu */
+    }
+    .link.incompatible {
+        stroke: #f44336; /* rouge */
+    }
+    .edit-link {
+        cursor: pointer;
+    }
+    .link.linked {
+        stroke: #aaa; /* Gris standard */
+    }
+    .status {
+      pointer-events: all;
+      stroke: none;
+      rx: 8;
+      ry: 8;
+    }
+    .gamme-indicator rect {
+      width: 10px;
+      height: 10px;
+      stroke: #333;
+      stroke-width: 1px;
+    }
+
+    .included {
+      fill: #6d28d9;
+    }
+
+    .optional {
+      fill: url(#diagonalHatch);
+    }
+
+    .empty {
+      fill: #ffffff;
+    }
+
+    .edit-node.selected-for-link rect {
+      stroke: #7c3aed;
+      stroke-width: 3px;
+    }
+
+  </style>
+</head>
+<body>
+  <h2>Diagramme Conditionnel Multi-Règles</h2>
+
+  <label for="ruleset">Scénario :</label>
+  <select id="ruleset">
+  <option value="Standard" selected>Standard</option>
+  <option value="__edit__">🔧 Mode Édition (création)</option>
+</select>
+
+  <br>
+<button id="add-ruleset-btn">➕ Ajouter un scénario personnalisé</button>
+
+<div id="custom-ruleset-form" style="display: none; margin-top: 10px;">
+  <h3>Nouveau scénario</h3>
+  <label>Nom du scénario : <input type="text" id="scenario-name"></label><br><br>
+
+  <div id="nodes-list">
+    <!-- Nœuds ajoutés ici -->
+  </div>
+
+  <button id="manual-add-node">➕ Ajouter un nœud manuellement</button>
+  <button id="add-node-btn">➕ Ajouter un nœud</button><br><br>
+  <button id="save-ruleset">💾 Enregistrer le scénario</button>
+</div>
+
+<br><br>
+<button id="export">📤 Exporter Ruleset</button>
+<input type="file" id="importFile" accept=".json" style="display:none">
+<button id="import">📥 Importer Ruleset</button>
+
+  <svg id="graph" width="1000" height="600"></svg>
+  <div id="tooltip" style="
+    position: absolute;
+    background-color: #fff;
+    border: 1px solid #ccc;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    pointer-events: none;
+    display: none;
+    max-width: 250px;
+    z-index: 10;
+  "></div>
+
+  <script>
+    let inEditMode = false;
+    const nodes = [
+      {
+        id: "Matière",
+        x: 200,
+        y: 200,
+        gammeInfo: {
+          PureBasic: { included: false, optional: false },
+          PureEnd: { included: false, optional: true },
+          PureSmart: { included: true, optional: false }
+        }
+      },
+      {
+        id: "Taille",
+        x: 500,
+        y: 200,
+        gammeInfo: {
+          PureBasic: { included: true, optional: false },
+          PureEnd: { included: false, optional: true },
+          PureSmart: { included: true, optional: false }
+        }
+      }
+    ];
+    let selectedNodesForLink = [];
+    const ruleSets = {
+      "Standard": {
+        rules: {
+          "VPN": { incompatible_with: ["Offre Basic", "Serveur Mutualisé"], requires: ["Option Sécurité+"] },
+          "Offre Basic": { incompatible_with: ["VPN", "Support 24/7"] },
+          "Option Sécurité+": {},
+          "Serveur Mutualisé": { incompatible_with: ["VPN"] },
+          "Support 24/7": { incompatible_with: ["Offre Basic"] }
+        },
+        positions: {
+          "VPN": { x: 150, y: 100 },
+          "Offre Basic": { x: 450, y: 100 },
+          "Option Sécurité+": { x: 750, y: 250 },
+          "Serveur Mutualisé": { x: 150, y: 300 },
+          "Support 24/7": { x: 450, y: 300 }
+        }
+      },
+      // D'autres rulesets peuvent être ajoutés ici
+      "Offre Avancée": {
+        rules: {
+            "Support": { requires: ["SLA"] },
+            "SLA": {},
+            "VPN": { incompatible_with: ["Support"] }
+        },
+        positions: {
+            "Support": { x: 150, y: 100 },
+            "SLA": { x: 450, y: 100 },
+            "VPN": { x: 300, y: 250 }
+        }
+    }
+    };
+
+    const svg = d3.select("#graph");
+    const tooltip = d3.select("#tooltip");
+    const select = document.getElementById("ruleset");
+    Object.keys(ruleSets).forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+
+    let selected = new Set();
+    let currentRules = {};
+    let currentNodes = [];
+    let nodeGroup;
+
+    select.addEventListener("change", () => {
+      render(select.value);
+      inEditMode = false;
+      svg.on("click", null);
+    });
+
+    function render(ruleSetName) {
+        if (ruleSetName === "__edit__") {
+            enterEditMode();
+            return;
+        }
+      selected = new Set();
+      const { rules, positions } = ruleSets[ruleSetName];
+      currentRules = rules;
+
+      currentNodes = Object.keys(rules).map(id => ({ id, ...positions[id] }));
+      const links = [];
+      for (const [src, rule] of Object.entries(rules)) {
+        (rule.incompatible_with || []).forEach(dst => {
+          links.push({ source: src, target: dst, type: "incompatible" });
+        });
+        (rule.requires || []).forEach(dst => {
+          links.push({ source: src, target: dst, type: "requires" });
+        });
+      }
+
+      svg.selectAll("*").remove();
+
+      svg.append("defs")
+        .append("marker")
+        .attr("id", "arrow")
+        .attr("viewBox", "0 -5 10 10")
+        .attr("refX", 10)
+        .attr("refY", 0)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .append("path")
+        .attr("d", "M0,-5L10,0L0,5")
+        .attr("fill", "#999");
+
+      svg.append("defs")
+        .append("pattern")
+        .attr("id", "diagonalHatch")
+        .attr("patternUnits", "userSpaceOnUse")
+        .attr("width", 6)
+        .attr("height", 6)
+        .append("path")
+        .attr("d", "M0,0 l6,6")
+        .attr("stroke", "#999")
+        .attr("stroke-width", 1);
+
+      const getNode = id => currentNodes.find(n => n.id === id);
+
+      const getBordCoord = (from, to) => {
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const angle = Math.atan2(dy, dx);
+        const halfW = from.width / 2;
+        const halfH = from.height / 2;
+        const ratio = Math.min(Math.abs(halfW / Math.cos(angle)), Math.abs(halfH / Math.sin(angle)));
+        return {
+          x: from.x + ratio * Math.cos(angle),
+          y: from.y + ratio * Math.sin(angle)
+        };
+      };
+
+
+      svg.append("defs")
+      .append("pattern")
+      .attr("id", "diagonalHatch")
+      .attr("patternUnits", "userSpaceOnUse")
+      .attr("width", 6)
+      .attr("height", 6)
+      .append("path")
+      .attr("d", "M0,0 l6,6")
+      .attr("stroke", "#999")
+      .attr("stroke-width", 1);
+
+    const nodeGroup = svg.selectAll(".edit-node")
+      .data(nodes)
+      .join("g")
+      .attr("class", "edit-node")
+      .attr("transform", d => `translate(${d.x},${d.y})`);
+
+    nodeGroup.append("rect")
+      .attr("x", -50)
+      .attr("y", -20)
+      .attr("width", 100)
+      .attr("height", 40)
+      .attr("fill", "#fafafa")
+      .attr("stroke", "#333");
+
+    nodeGroup.append("text")
+      .attr("text-anchor", "middle")
+      .attr("dy", 5)
+      .text(d => d.id);
+
+    // Ajout des indicateurs de gamme
+    const gammeNames = ["PureBasic", "PureEnd", "PureSmart"];
+
+    nodeGroup.selectAll("g.gamme-indicator")
+      .data(d => gammeNames.map(name => ({
+        gamme: name,
+        type: d.gammeInfo[name]?.included ? "included" : d.gammeInfo[name]?.optional ? "optional" : "empty",
+        node: d
+      })))
+      .join("g")
+      .attr("class", "gamme-indicator")
+      .attr("transform", (d, i) => `translate(${-30 + i * 20}, 30)`)
+      .append("rect")
+      .attr("width", 12)
+      .attr("height", 12)
+      .attr("class", d => d.type)
+      .attr("stroke", "#000");
+
+      
+      nodeGroup = svg.append("g")
+        .selectAll("g")
+        .data(currentNodes)
+        .join("g")
+        .attr("class", "node")
+        .attr("transform", d => `translate(${d.x},${d.y})`);
+
+      nodeGroup.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", 5)
+        .text(d => d.id);
+
+      nodeGroup.each(function(d) {
+        const textNode = d3.select(this).select("text").node();
+        const textWidth = textNode.getBBox().width;
+        d.width = textWidth + 30;
+        d.height = 40;
+      });
+
+      svg.append("g")
+        .selectAll("line")
+        .data(links)
+        .join("line")
+        .attr("class", d => `link ${d.type}`)
+        .attr("marker-end", "url(#arrow)")
+        .attr("x1", d => getBordCoord(getNode(d.source), getNode(d.target)).x)
+        .attr("y1", d => getBordCoord(getNode(d.source), getNode(d.target)).y)
+        .attr("x2", d => getBordCoord(getNode(d.target), getNode(d.source)).x)
+        .attr("y2", d => getBordCoord(getNode(d.target), getNode(d.source)).y);
+
+      nodeGroup.insert("rect", "text")
+        .attr("class", "bg")
+        .attr("x", d => -d.width / 2)
+        .attr("y", d => -d.height / 2)
+        .attr("width", d => d.width)
+        .attr("height", d => d.height)
+        .attr("fill", "#eee");
+
+      nodeGroup.insert("rect", "text")
+        .attr("class", "status")
+        .attr("x", d => -d.width / 2)
+        .attr("y", d => -d.height / 2)
+        .attr("width", d => d.width)
+        .attr("height", d => d.height)
+        .on("click", function(event, d) {
+  const id = d.id;
+  const isCurrentlySelected = selected.has(id);
+
+  if (isCurrentlySelected) {
+    // Retirer le nœud et toutes les dépendances qui en dépendent
+    selected.delete(id);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const elt of Array.from(selected)) {
+        const requires = currentRules[elt]?.requires || [];
+        if (!requires.every(r => selected.has(r))) {
+          selected.delete(elt);
+          changed = true;
+        }
+      }
+    }
+  } else {
+    // Teste avant d’ajouter
+    if (isDisabled(id)) return;
+
+    // Ajoute
+    selected.add(id);
+
+    // 🔐 Invalide tous les autres éléments devenus incompatibles
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const elt of Array.from(selected)) {
+        const incompatibles = currentRules[elt]?.incompatible_with || [];
+        for (const inc of incompatibles) {
+          if (selected.has(inc)) {
+            selected.delete(inc);
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+
+  updateUI();
+})
+        .on("mousemove", function(event, d) {
+          if (!isDisabled(d.id)) return;
+          const reason = getDisableReason(d.id);
+          tooltip.style("left", (event.pageX + 10) + "px")
+                 .style("top", (event.pageY + 10) + "px")
+                 .style("display", "block")
+                 .style("background-color", reason.color)
+                 .html(reason.html);
+        })
+        .on("mouseout", () => {
+          tooltip.style("display", "none").style("background-color", "#fff");
+        });
+
+      updateUI();
+    }
+
+    function drawEditableNodes() {
+  svg.selectAll(".edit-node").remove();
+  drawEditableLinks(); // ✅ Affichage des liens en premier
+
+  const group = svg.selectAll(".edit-node")
+    .data(currentNodes, d => d.id)
+    .join(
+      enter => {
+        const g = enter.append("g")
+          .attr("class", "edit-node")
+          .attr("transform", d => `translate(${d.x},${d.y})`)
+          .call(d3.drag()
+            .on("drag", function(event, d) {
+  const svgWidth = parseInt(svg.attr("width"));
+  const svgHeight = parseInt(svg.attr("height"));
+
+  // Marges de sécurité
+  const padding = 50;
+
+  d.x = Math.max(padding, Math.min(svgWidth - padding, event.x));
+  d.y = Math.max(padding, Math.min(svgHeight - padding, event.y));
+
+  d3.select(this).attr("transform", `translate(${d.x},${d.y})`);
+
+  drawEditableLinks(); // redraw
+  updateFormCoordinates(d.id, d.x, d.y); // mise à jour de l’UI
+})
+          );
+
+        g.append("rect")
+          .attr("x", -50)
+          .attr("y", -20)
+          .attr("width", 100)
+          .attr("height", 40)
+          .attr("fill", "#fafafa")
+          .attr("stroke", "#333");
+
+        g.append("text")
+          .attr("text-anchor", "middle")
+          .attr("dy", 5)
+          .text(d => d.id);
+
+        return g;
+      },
+      update => update,
+      exit => exit.remove()
+    );
+}
+
+    function enterEditMode() {
+  // Réinitialise tout l’environnement
+  svg.selectAll("*").remove();         // Supprime tout visuel
+  currentNodes = [];                   // Vide les nœuds
+  currentRules = {};                   // Vide les règles
+  selected.clear();                    // Vide la sélection
+
+  svg.on(".zoom", null);               // ⚠️ Désactive zoom/déplacement D3 si utilisé
+  svg.selectAll(".link").remove();
+
+  selected = new Set();
+  currentRules = {};
+  currentNodes = [];
+
+
+  // Titre
+  svg.append("text")
+    .attr("x", 20)
+    .attr("y", 40)
+    .text("Cliquez pour ajouter un nouveau nœud")
+    .attr("font-size", "16px");
+
+  // Événement clic pour placer un nouveau nœud
+  svg.on("click", function(event) {
+  const target = event.target;
+
+  // 🛑 Ignore si on clique sur un lien
+  if (target.tagName === "line") return;
+
+  const [x, y] = d3.pointer(event);
+  const clickedNode = currentNodes.find(n => {
+    const dx = x - n.x;
+    const dy = y - n.y;
+    return Math.abs(dx) < n.width / 2 && Math.abs(dy) < n.height / 2;
+  });
+
+  if (clickedNode) {
+    selectedNodesForLink.push(clickedNode.id);
+
+    if (selectedNodesForLink.length === 2) {
+      const [source, target] = selectedNodesForLink;
+
+      if (!currentRules[source]) currentRules[source] = {};
+      if (!currentRules[source].linked_with) currentRules[source].linked_with = [];
+
+      if (!currentRules[source].linked_with.includes(target)) {
+        currentRules[source].linked_with.push(target);
+      }
+
+      selectedNodesForLink = [];
+      drawEditableNodes();
+    }
+  } else {
+   const field = document.createElement("fieldset");
+field.style = "margin-bottom:10px;border:1px solid #ccc;padding:10px;";
+field.dataset.node = id;
+field.innerHTML = `
+  <legend>Nœud <button class="delete-node" style="float:right">❌</button></legend>
+  <label>Nom : <input class="node-name" value="${id}" /></label><br>
+  <label>x : <input class="node-x" type="number" value="${Math.round(x)}"/></label>
+  <label>y : <input class="node-y" type="number" value="${Math.round(y)}"/></label><br>
+  <label>Dépendances : <input class="node-requires" placeholder="séparés par virgule"/></label><br>
+  <label>Incompatibles : <input class="node-incompatibles" placeholder="séparés par virgule"/></label>
+`;
+nodeListDiv.appendChild(field);
+
+// Ajout du comportement de suppression
+field.querySelector(".delete-node").addEventListener("click", () => {
+  currentNodes = currentNodes.filter(n => n.id !== id);
+  delete currentRules[id];
+  nodeListDiv.removeChild(field);
+  drawEditableNodes();
+});
+
+  drawEditableNodes();
+}
+  });
+}
+
+    function isDisabled(option) {
+      if (selected.has(option)) return false;
+      for (let sel of selected) {
+        const incompat = currentRules[sel]?.incompatible_with || [];
+        if (incompat.includes(option)) return true;
+      }
+      const required = currentRules[option]?.requires || [];
+      return required.length && !required.every(r => selected.has(r));
+    }
+
+    function getDisableReason(id) {
+      const required = currentRules[id]?.requires || [];
+      const missing = required.filter(r => !selected.has(r));
+
+      const blocking = [];
+      for (let sel of selected) {
+        const incompat = currentRules[sel]?.incompatible_with || [];
+        if (incompat.includes(id)) blocking.push(sel);
+      }
+
+      const reasons = [];
+      if (missing.length > 0) {
+        reasons.push(`🟦 <b>Requiert</b> : ${missing.map(m => `<b>${m}</b>`).join(', ')}`);
+      }
+      if (blocking.length > 0) {
+        reasons.push(`🟥 <b>Incompatible avec</b> : ${blocking.map(b => `<b>${b}</b>`).join(', ')}`);
+      }
+
+      let bgColor = "#eee";
+      if (blocking.length > 0) bgColor = "#fdecea";
+      else if (missing.length > 0) bgColor = "#e8f1fa";
+
+      return { html: reasons.join("<br>") || "Indisponible.", color: bgColor };
+    }
+
+    function updateUI() {
+      nodeGroup.select("rect.status")
+        .attr("fill", d => {
+          if (selected.has(d.id)) return "#4caf50";
+          if (isDisabled(d.id)) return "url(#diagonalHatch)";
+          return "transparent";
+        });
+    }
+
+
+    // 📤 Export du ruleset courant
+document.getElementById("export").addEventListener("click", () => {
+  const currentSet = select.value;
+  const data = ruleSets[currentSet];
+
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ruleset-${currentSet}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+// 📥 Import via fichier
+document.getElementById("import").addEventListener("click", () => {
+  document.getElementById("importFile").click();
+});
+
+document.getElementById("importFile").addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const imported = JSON.parse(reader.result);
+
+      // Vérification simple
+      if (!imported.rules || !imported.positions) {
+        alert("Fichier invalide : il manque des propriétés 'rules' ou 'positions'");
+        return;
+      }
+
+      // Ajout automatique d’un nom unique
+      let rawName = file.name.replace(/\.[^/.]+$/, "");
+      let name = rawName;
+      let i = 1;
+      while (ruleSets[name]) {
+      name = `${rawName}_${i++}`;
+      }
+
+      ruleSets[name] = imported;
+
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+
+      select.value = name;
+      render(name);
+    } catch (e) {
+      alert("Erreur de lecture du fichier : " + e.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
+    const addBtn = document.getElementById("add-ruleset-btn");
+const formDiv = document.getElementById("custom-ruleset-form");
+const nodeListDiv = document.getElementById("nodes-list");
+const saveBtn = document.getElementById("save-ruleset");
+const scenarioNameInput = document.getElementById("scenario-name");
+const addNodeBtn = document.getElementById("add-node-btn");
+
+let tempNodeCount = 0;
+
+addBtn.onclick = () => {
+  formDiv.style.display = "block";
+  nodeListDiv.innerHTML = '';
+  formDiv.querySelectorAll("input").forEach(input => {
+  input.addEventListener("input", updateVisualPreviewFromForm);
+});
+  scenarioNameInput.value = '';
+  tempNodeCount = 0;
+  updateVisualPreviewFromForm();
+};
+
+addNodeBtn.onclick = () => {
+  const id = `node-${tempNodeCount++}`;
+  const div = document.createElement("div");
+  div.innerHTML = `
+  <fieldset style="margin-bottom:10px;border:1px solid #ccc;padding:10px;" data-node="${id}">
+    <legend>Nœud <button class="delete-node" style="float:right">❌</button></legend>
+      <label>Nom : <input class="node-name" /></label><br>
+      <label>x : <input class="node-x" type="number" value="${100 + tempNodeCount * 100}"/></label>
+      <label>y : <input class="node-y" type="number" value="${100 + tempNodeCount * 50}"/></label><br>
+      <label>Dépendances : <input class="node-requires" placeholder="séparés par virgule"/></label><br>
+      <label>Incompatibles : <input class="node-incompatibles" placeholder="séparés par virgule"/></label>
+    </fieldset>
+  `;
+  nodeListDiv.appendChild(div);
+  updateVisualPreviewFromForm();
+  div.querySelector(".delete-node").addEventListener("click", () => {
+  div.remove();
+  updateVisualPreviewFromForm();
+  });
+div.querySelector(".delete-node").addEventListener("click", () => {
+  div.remove();
+  updateVisualPreviewFromForm();
+});
+};
+
+saveBtn.onclick = () => {
+  const name = scenarioNameInput.value.trim();
+  if (!name || ruleSets[name]) {
+    alert("Nom invalide ou déjà utilisé.");
+    return;
+  }
+
+  const rules = {};
+  const positions = {};
+  nodeListDiv.querySelectorAll("fieldset").forEach(field => {
+    const name = field.querySelector(".node-name").value.trim();
+    const x = parseInt(field.querySelector(".node-x").value);
+    const y = parseInt(field.querySelector(".node-y").value);
+    const requires = field.querySelector(".node-requires").value.split(",").map(s => s.trim()).filter(Boolean);
+    const incompatibles = field.querySelector(".node-incompatibles").value.split(",").map(s => s.trim()).filter(Boolean);
+
+    if (!name) return;
+
+    rules[name] = {
+      requires,
+      incompatible_with: incompatibles
+    };
+    positions[name] = { x, y };
+  });
+
+  ruleSets[name] = { rules, positions };
+
+  // Ajout dans la dropdown
+  const opt = document.createElement("option");
+  opt.value = name;
+  opt.textContent = name;
+  document.getElementById("ruleset").appendChild(opt);
+
+  // Sélection automatique
+  document.getElementById("ruleset").value = name;
+  render(name);
+
+  formDiv.style.display = "none";
+};
+
+function updateVisualPreviewFromForm() {
+  currentNodes = [];
+  currentRules = {};
+
+  nodeListDiv.querySelectorAll("fieldset").forEach(field => {
+    const name = field.querySelector(".node-name").value.trim();
+    const x = parseInt(field.querySelector(".node-x").value);
+    const y = parseInt(field.querySelector(".node-y").value);
+    const requires = field.querySelector(".node-requires").value.split(",").map(s => s.trim()).filter(Boolean);
+    const incompatibles = field.querySelector(".node-incompatibles").value.split(",").map(s => s.trim()).filter(Boolean);
+
+    if (!name) return;
+
+    currentNodes.push({ id: name, x, y, width: 100, height: 40 });
+    currentRules[name] = { requires, incompatible_with: incompatibles };
+  });
+
+  drawEditableNodes(); // 🔁 met à jour l’aperçu SVG
+}
+
+function updateFormCoordinates(id, x, y) {
+  const field = Array.from(document.querySelectorAll("fieldset"))
+    .find(f => f.querySelector(".node-name")?.value.trim() === id);
+  if (field) {
+    field.querySelector(".node-x").value = Math.round(x);
+    field.querySelector(".node-y").value = Math.round(y);
+  }
+}
+
+function drawEditableLinks() {
+  const links = [];
+  for (const [src, rule] of Object.entries(currentRules)) {
+    (rule.requires || []).forEach(dst => links.push({ source: src, target: dst, type: "requires" }));
+    (rule.incompatible_with || []).forEach(dst => links.push({ source: src, target: dst, type: "incompatible" }));
+    (rule.linked_with || []).forEach(dst => links.push({ source: src, target: dst, type: "linked" }));
+  }
+
+  const getNode = id => currentNodes.find(n => n.id === id);
+  const getBordCoord = (from, to) => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const angle = Math.atan2(dy, dx);
+    const halfW = from.width / 2;
+    const halfH = from.height / 2;
+    const ratio = Math.min(Math.abs(halfW / Math.cos(angle)), Math.abs(halfH / Math.sin(angle)));
+    return {
+      x: from.x + ratio * Math.cos(angle),
+      y: from.y + ratio * Math.sin(angle)
+    };
+  };
+
+  svg.selectAll(".edit-link").remove();
+
+  svg.append("g")
+  .selectAll("line.hitbox")
+  .data(links)
+  .join("line")
+  .attr("class", "edit-link-hitbox")
+  .attr("x1", d => getBordCoord(getNode(d.source), getNode(d.target)).x)
+  .attr("y1", d => getBordCoord(getNode(d.source), getNode(d.target)).y)
+  .attr("x2", d => getBordCoord(getNode(d.target), getNode(d.source)).x)
+  .attr("y2", d => getBordCoord(getNode(d.target), getNode(d.source)).y)
+  .attr("stroke-width", 12)         // ✅ zone cliquable élargie
+  .attr("stroke", "transparent")    // invisible
+  .style("cursor", "pointer")
+  .on("click", function(event, d) {
+    const options = ["requires", "incompatible", "linked"];
+    const next = options[(options.indexOf(d.type) + 1) % options.length];
+
+    const rule = currentRules[d.source];
+    ["requires", "incompatible_with", "linked_with"].forEach(type => {
+      if (rule[type]) rule[type] = rule[type].filter(t => t !== d.target);
+    });
+
+    const key = next === "incompatible" ? "incompatible_with" :
+                next === "linked" ? "linked_with" : "requires";
+    if (!rule[key]) rule[key] = [];
+    rule[key].push(d.target);
+
+    drawEditableNodes();
+  });
+
+// Ensuite, les vraies lignes visibles (plus fines, au-dessus)
+svg.append("g")
+  .selectAll("line.link")
+  .data(links)
+  .join("line")
+  .attr("class", d => `edit-link link ${d.type}`)
+  .attr("marker-end", "url(#arrow)")
+  .attr("x1", d => getBordCoord(getNode(d.source), getNode(d.target)).x)
+  .attr("y1", d => getBordCoord(getNode(d.source), getNode(d.target)).y)
+  .attr("x2", d => getBordCoord(getNode(d.target), getNode(d.source)).x)
+  .attr("y2", d => getBordCoord(getNode(d.target), getNode(d.source)).y);
+}
+
+document.getElementById("manual-add-node").addEventListener("click", () => {
+  const id = prompt("Nom du nœud ?");
+  if (!id || currentNodes.find(n => n.id === id)) return;
+
+  // Position aléatoire (ou fixe)
+  const x = 200 + Math.random() * 400;
+  const y = 150 + Math.random() * 300;
+
+  currentNodes.push({ id, x, y, width: 100, height: 40 });
+  currentRules[id] = {};
+
+  drawEditableNodes();
+});
+
+render(select.value);
+  </script>
+</body>
+</html>

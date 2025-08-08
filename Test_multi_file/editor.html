@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Éditeur de Schéma – Bureau d'Études</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+  <h1>🛠️ Éditeur de Schéma – Bureau d'Études</h1>
+
+  <div style="margin-bottom: 20px;">
+    <button onclick="window.location.href='index.html'">Retour à l’interface commerciale</button>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+    <!-- UI -->
+    <div>
+      <h2>Ajouter un Groupe</h2>
+      <input id="group-name" placeholder="Nom du groupe" />
+      <button id="add-group">Ajouter groupe</button>
+
+      <h2>Ajouter un Sous-groupe</h2>
+    <select id="parent-group-select"></select>
+    <input id="subgroup-name" placeholder="Nom du sous-groupe" />
+    <button id="add-subgroup">Ajouter sous-groupe</button>
+    <h3>Groupes et Sous-groupes existants</h3>
+    <div id="sidebar">
+    <div id="group-tree"></div>
+    </div>
+
+      <h2> Ajouter une Option</h2>
+      <select id="group-select"></select> <!-- Groupe principal -->
+      <select id="subgroup-select"></select> <!-- Sous-groupe -->
+      <input id="option-name" placeholder="Nom de l'option" />
+      <p>Statut Smart :
+  <select id="gamme-smart">
+    <option value="absent">Absent</option>
+    <option value="included">Présent</option>
+    <option value="optional">Optionnelle</option>
+  </select>
+</p>
+<p>Statut Mod :
+  <select id="gamme-mod">
+    <option value="absent">Absent</option>
+    <option value="included">Présent</option>
+    <option value="optional">Optionnelle</option>
+  </select>
+</p>
+<p>Statut Evo :
+  <select id="gamme-evo">
+    <option value="absent">Absent</option>
+    <option value="included">Présent</option>
+    <option value="optional">Optionnelle</option>
+  </select>
+</p>
+
+
+      <button id="add-option">Ajouter option</button>
+
+      <h2>Définir une Règle</h2>
+<select id="rule-from"></select>
+<select id="rule-type">
+  <option value="requires">Dépend de</option>
+  <option value="incompatible">Incompatible avec</option>
+</select>
+<select id="rule-to"></select>
+<input id="rule-set-name" placeholder="Nom du set de règles" />
+<button id="add-rule">Ajouter règle</button>
+<h3>Règles ajoutées</h3>
+<ul id="rules-list"></ul>
+
+      <h2>Exporter</h2>
+      <button id="export-json">Télécharger gammes.js</button>
+    </div>
+
+    <div>
+      <h2>Aperçu</h2>
+      <button id="recenter-btn">Recentrer la vue</button>
+      <svg id="preview" width="1200" height="800" style="border:1px solid #ccc;"></svg>
+    </div>
+  </div>
+
+  <!-- Entrée script -->
+  <script type="module" src="js/editor-main.js"></script>
+</body>
+</html>
