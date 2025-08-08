@@ -1,33 +1,37 @@
-import { applyRules, isDisabled } from "./rules-engine.js";
-import { nodes, groupedCriteria, selected, store } from "./setup.js";
-import { renderNodes } from "./render.js";
-import { updateGammeSummary } from "./summary.js";
+import * as setup from "./setup.js";
+import { applyRules } from "./rules-engine.js";
 
-export function handleClick(optionId) {
-  if (isDisabled(optionId, selected, store.currentRules)) return;
+/**
+ * Callback de clic passé au renderer.
+ * - Garde/retire l’élément cliqué
+ * - Applique les règles avec préférence pour le dernier cliqué
+ * - Re-render via la fonction exposée par main.js (window.__be.rerender)
+ */
+export function handleClick(name){
+  const wasSelected = setup.selected.has(name);
+  const next = new Set(setup.selected);
 
-  const groupName = Object.keys(groupedCriteria).find(name =>
-    groupedCriteria[name].includes(optionId)
-  );
+  if (wasSelected) next.delete(name);
+  else next.add(name);
 
-  if (groupName) {
-    if (selected.has(optionId)) {
-      selected.delete(optionId);
-    } else {
-      groupedCriteria[groupName].forEach(item => selected.delete(item));
-      selected.add(optionId);
-    }
-  } else {
-    selected.has(optionId) ? selected.delete(optionId) : selected.add(optionId);
-  }
+  const resolved = applyRules(next, setup.store.currentRules, {
+    lastClicked: name,
+    removal: wasSelected,
+  });
 
-  const newSelection = applyRules(selected, store.currentRules);
-    selected.clear();
-    newSelection.forEach(v => selected.add(v));
-  renderNodes(nodes, selected, handleClick, isDisabledWithContext);
-  updateGammeSummary();
+  // Écrase la sélection courante avec le résultat
+  setup.selected.clear();
+  for (const v of resolved) setup.selected.add(v);
+
+  // Re-render centralisé (fourni par main.js)
+  window.__be?.rerender?.();
 }
 
-export function isDisabledWithContext(optionId) {
-  return isDisabled(optionId, selected, store.currentRules);
+/**
+ * Optionnel: utiliser cette fonction pour "griser" certains nœuds si tu veux
+ * Aujourd’hui, grâce au choix "garder le dernier cliqué", on évite de bloquer l’utilisateur.
+ * → On renvoie 'false' par défaut (aucun nœud désactivé avant clic).
+ */
+export function isDisabledWithContext(name /*, selected, currentRules */){
+  return false;
 }

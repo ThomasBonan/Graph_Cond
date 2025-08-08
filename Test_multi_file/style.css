@@ -1,168 +1,154 @@
-body {
-  font-family: sans-serif;
-  margin: 20px;
-  overflow-x: hidden;
+/* ========== Thème par variables CSS ========== */
+:root{
+  /* Dark (par défaut) */
+  --c-bg:#0b0d10;
+  --c-panel:#12161b;
+  --c-text:#e8eef5;
+  --c-text-muted:#cbd5e1;
+  --c-text-halo: rgba(0,0,0,.55);   /* halo utile en sombre */
+  --c-text-halo-w: 2.5;             /* largeur de halo (px) en sombre */
+  --c-border:#212833;
+  --c-stroke:#4b5563;
+  --c-stroke-weak:#3a4658;
+  --c-stroke-group:#2c3645;
+  --c-accent:#3b82f6;
+  --c-green:  #646363;  /* Smart */
+  --c-blue:   #da261b;  /* Mod   */
+  --c-purple: #304e9c;  /* Evo   */
+  --c-box-bg:#0b0f14;
+
+  /* Règles (sombre) bien contrastées */
+  --c-rule-req-bg:#60a5fa;      /* bleu-400, clair mais lisible */
+  --c-rule-req-border:#2563eb;  /* bleu-600 */
+  --c-rule-inc-bg:#f87171;      /* rouge-400 */
+  --c-rule-inc-border:#dc2626;  /* rouge-600 */
+
+  --space:14px;
+  --radius:10px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
-#graph {
-  border: 1px solid #ccc;
-  background: #fafafa;
+/* Light overrides */
+:root[data-theme="light"]{
+  --c-bg:#f6f8fb;
+  --c-panel:#ffffff;
+  --c-text:#0f172a;
+  --c-text-muted:#334155;
+
+  /* ✅ On coupe le halo en clair (netteté) */
+  --c-text-halo: transparent;
+  --c-text-halo-w: 0;
+
+  --c-border:#e2e8f0;
+  --c-stroke:#cbd5e1;
+  --c-stroke-weak:#d1d5db;
+  --c-stroke-group:#d1d5db;
+  --c-accent:#2563eb;
+  --c-box-bg:#ffffff;
+
+  --c-green:  #646363;  /* Smart */
+  --c-blue:   #da261b;  /* Mod   */
+  --c-purple: #304e9c;  /* Evo   */
+
+  /* Versions claires (pastel + bons contours) */
+  --c-rule-req-bg:#dbeafe;       /* bleu-100 */
+  --c-rule-req-border:#2563eb;   /* bleu-600 */
+  --c-rule-inc-bg:#fee2e2;       /* rouge-100 */
+  --c-rule-inc-border:#dc2626;   /* rouge-600 */
 }
 
-#preview {
-  background: #fafafa;
+/* ========== Reset & Layout ========== */
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color:var(--c-text);
+  background:linear-gradient(180deg,#0b0d10,#0f141a 40%, #0b0d10);
+}
+:root[data-theme="light"] body{
+  background:linear-gradient(180deg,#f8fafc,#eef2f7 40%, #f6f8fb);
 }
 
-#sidebar {
-  width: 320px;              /* largeur fixe (ajuste si besoin) */
-  max-width: 100vw;
-  max-height: 260px;         /* <-- Limite la hauteur totale visible ! */
-  overflow-y: auto;
-  overflow-x: hidden;
-  background: #fff;
-  border-right: 1px solid #eee;
-  box-sizing: border-box;
-  padding: 0 8px 0 0;
-  position: relative;
-  margin-bottom: 18px;       /* Ajoute une petite marge avec la suite */
+.page-header{
+  padding: 18px var(--space);
+  border-bottom:1px solid var(--c-border);
+  background:color-mix(in oklab, var(--c-panel) 96%, black 4%);
+}
+.page-header h1{margin:0}
+.header-actions{ display:flex; gap:10px; align-items:center; }
+
+.layout{
+  display:grid;
+  grid-template-columns: 360px 1fr;
+  gap: var(--space);
+  padding: var(--space);
 }
 
-#group-tree {
-  min-width: 180px;
-  /* Tu peux ajuster ici la largeur mini des groupes */
+.sidebar{ display:flex; flex-direction:column; gap: var(--space); }
+
+.panel{
+  background: var(--c-panel);
+  border:1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: var(--space);
+}
+.panel h2, .panel h3{ margin: 0 0 10px 0; color: var(--c-text); }
+label{ color: var(--c-text-muted); }
+
+input, select{
+  width:100%;
+  background: var(--c-box-bg);
+  color: var(--c-text);
+  border:1px solid var(--c-border);
+  border-radius:8px;
+  padding:8px 10px;
 }
 
-.main-content {
-  margin-left: 330px; /* doit être >= à la largeur de la sidebar */
-  padding: 20px;
+.fieldset{
+  border:1px dashed var(--c-border);
+  border-radius:8px;
+  padding:10px;
 }
 
-.node rect.main {
-  stroke: #333;
-  stroke-width: 1.5px;
-  fill: white;
+.grid-3{
+  display:grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap:8px 10px;
 }
 
-.node text {
-  pointer-events: none;
-  font-size: 14px;
+.btn{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:8px 12px; border-radius:8px;
+  color:var(--c-text); background:color-mix(in oklab, var(--c-panel) 85%, black 15%); border:1px solid var(--c-border);
+  cursor:pointer;
+}
+.btn:hover{ background:color-mix(in oklab, var(--c-panel) 82%, black 18%) }
+.btn-primary{ background:var(--c-accent); border-color:color-mix(in oklab, var(--c-accent) 70%, black 30%); color:white; }
+.btn-primary:hover{ filter:brightness(1.05) }
+
+.preview{
+  background: var(--c-panel);
+  border:1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: var(--space);
+}
+.preview-toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+
+#sidebar{
+  max-height: 260px;
+  overflow: auto;
+  background: var(--c-box-bg);
+  border:1px solid var(--c-border);
+  border-radius:8px;
+  padding:8px;
 }
 
-.node .status.selected {
-  fill: rgba(76, 175, 80, 0.5) !important;
-}
+/* Aperçu */
+#preview, #graph{ background: var(--c-box-bg); border-radius:8px; border:1px solid var(--c-border); }
 
-.status.disabled {
-  fill: url(#diagonalHatch);
-}
-
-.status.normal {
-  fill: transparent;
-}
-
-.gamme-indicator rect {
-  width: 12px;
-  height: 12px;
-  stroke: #333;
-  stroke-width: 1px;
-}
-
-.gamme-indicator.included.PureBasic {
-  fill: #6d28d9;
-}
-.gamme-indicator.included.PureEnd {
-  fill: #2dd4bf;
-}
-.gamme-indicator.included.PureSmart {
-  fill: #4ade80;
-}
-
-.gamme-indicator.optional.PureBasic {
-  fill: url(#diagonalHatch);
-  stroke: #6d28d9;
-}
-.gamme-indicator.optional.PureEnd {
-  fill: url(#diagonalHatch);
-  stroke: #2dd4bf;
-}
-.gamme-indicator.optional.PureSmart {
-  fill: url(#diagonalHatch);
-  stroke: #4ade80;
-}
-
-.gamme-indicator.empty {
-  fill: white;
-}
-.gamme-indicator.disabled {
-  fill: #ccc;
-}
-.gamme-indicator {
-  stroke: #333;
-  stroke-width: 1px;
-}
-.gamme-indicator text {
-  font-size: 12px;
-  fill: #333;
-  pointer-events: none;
-}
-
-.status.blocked-require {
-  fill: rgba(33, 150, 243, 0.3); /* bleu clair */
-}
-
-.status.blocked-incompat {
-  fill: rgba(244, 67, 54, 0.3); /* rouge clair */
-}
-
-.group-title {
-  fill: #333;
-  font-weight: bold;
-  text-align: center;
-  margin-bottom: 5px;
-}
-
-.group-box {
-  rx: 6;
-  ry: 6;
-  stroke-width: 2px;
-}
-
-.group {
-  border: 2px dashed #ccc;
-  padding: 10px;
-  margin: 10px;
-  position: absolute;
-  width: 200px;
-}
-
-.group.subgroup {
-  margin: 10px auto;
-  padding: 5px;
-  border: 1px dashed #bbb;
-  width: 90%;
-}
-
-.option {
-  border: 1px solid #333;
-  padding: 5px;
-  margin: 5px auto;
-  text-align: center;
-  width: 90%;
-}
-
-.option-label {
-  font-size: 14px;
-  margin-bottom: 3px;
-}
-
-.option-bars {
-  display: flex;
-  justify-content: space-between;
-}
-
-.bar {
-  flex: 1;
-  height: 12px;
-  margin: 0 1px;
-}
-
+/* Badges (optionnels) */
+.badge{ font:12px var(--mono); padding:2px 6px; border-radius:6px; background:var(--c-box-bg); border:1px solid var(--c-border); color:var(--c-text-muted) }
+.badge.smart{ color:color-mix(in oklab, var(--c-green) 85%, white 15%); border-color:color-mix(in oklab, var(--c-green) 35%, black 65%); background:color-mix(in oklab, var(--c-green) 20%, var(--c-box-bg) 80%)}
+.badge.mod{   color:color-mix(in oklab, var(--c-blue) 85%, white 15%);  border-color:color-mix(in oklab, var(--c-blue) 35%, black 65%);  background:color-mix(in oklab, var(--c-blue) 20%, var(--c-box-bg) 80%)}
+.badge.evo{   color:color-mix(in oklab, var(--c-purple) 85%, white 15%);border-color:color-mix(in oklab, var(--c-purple) 35%, black 65%);background:color-mix(in oklab, var(--c-purple) 20%, var(--c-box-bg) 80%)}

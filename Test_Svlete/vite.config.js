@@ -1,0 +1,8 @@
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+
+/** @type {import('vite').UserConfig} */
+export default {
+  plugins: [svelte()],
+  server: { port: 5173, host: true },
+  build: { outDir: 'dist' }
+};

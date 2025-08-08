@@ -1,0 +1,140 @@
+:root {
+  --c-bg: #0b0f14;
+  --c-text: #e8eef5;
+  --c-text-muted: #94a3b8;
+  --c-stroke: #4b5563;
+  --c-stroke-weak: #3a4658;
+  --c-stroke-group: #2c3645;
+  --c-box-bg: #0f172a;
+
+  /* Règles */
+  --c-rule-req-bg: #60a5fa;
+  --c-rule-req-border: #2563eb;
+  --c-rule-inc-bg: #f87171;
+  --c-rule-inc-border: #dc2626;
+
+  /* Gammes (validé) */
+  --c-smart: #646363;
+  --c-mod: #da261b;
+  --c-evo: #304e9c;
+
+  --c-btn: #1f2937;
+  --c-btn-text: #e5e7eb;
+
+  --tooltip-bg: #111827;
+  --tooltip-text: #e5e7eb;
+  --tooltip-border: #374151;
+  --c-text-halo: transparent;
+  --c-text-halo-w: 0;
+}
+
+:root[data-theme='light'] {
+  --c-bg: #f8fafc;
+  --c-text: #0f172a;
+  --c-text-muted: #475569;
+  --c-stroke: #cbd5e1;
+  --c-stroke-weak: #d1d5db;
+  --c-stroke-group: #cbd5e1;
+  --c-box-bg: #ffffff;
+
+  --c-rule-req-bg: #dbeafe;
+  --c-rule-req-border: #2563eb;
+  --c-rule-inc-bg: #fee2e2;
+  --c-rule-inc-border: #dc2626;
+
+  --c-text-halo: #ffffff;
+  --c-text-halo-w: 2px;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-bottom: 1px solid var(--c-stroke);
+  gap: 8px;
+}
+.topbar .left, .topbar .right { display: flex; align-items: center; gap: 8px; }
+
+.btn {
+  background: var(--c-btn); color: var(--c-btn-text);
+  border: 1px solid var(--c-stroke); border-radius: 6px;
+  padding: 6px 10px; cursor: pointer;
+}
+.btn.primary { background: #2563eb; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  height: calc(100% - 52px);
+}
+.sidebar { border-right: 1px solid var(--c-stroke); overflow: auto; padding: 12px; }
+.mainpane {
+  display: flex;              /* <-- au lieu d’un conteneur statique */
+  flex-direction: column;     /* toolbar en haut, graph qui prend le reste */
+}
+.toolbar { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--c-stroke); }
+svg { width: 100%; height: 100%; display: block; background: transparent; }
+
+input, select {
+  width: 100%; padding: 6px 8px; border: 1px solid var(--c-stroke); border-radius: 6px;
+  background: var(--c-box-bg); color: var(--c-text);
+}
+label { display:block; margin: 8px 0 4px; color: var(--c-text-muted); }
+
+.section { margin-bottom: 16px; }
+.rule { display:flex; align-items:center; gap:8px; margin:4px 0; }
+
+/* Tooltip flottant */
+#tooltip {
+  position: fixed; z-index: 50; pointer-events: none; opacity: 0;
+  transform: translate(-50%, calc(-100% - 10px));
+  background: var(--tooltip-bg); color: var(--tooltip-text);
+  border: 1px solid var(--tooltip-border); border-radius: 6px;
+  padding: 8px 10px; max-width: 360px; font-size: 12px; box-shadow: 0 10px 24px rgba(0,0,0,.35);
+}
+#tooltip.visible { opacity: 1; transition: opacity .08s ease-in-out; }
+.badge { padding: 2px 6px; border-radius: 6px; font-size: 12px; border: 1px solid var(--c-stroke); }
+.badge.smart { background: var(--c-smart); color: white; }
+.badge.mod   { background: var(--c-mod); color: white; }
+.badge.evo   { background: var(--c-evo); color: white; }
+
+
+.sidebar h3 { margin: 6px 0 8px; }
+.sidebar .section { margin-bottom: 14px; }
+
+.layout.editor-grid {
+  /* conserve ton calcul de hauteur globale via .layout existante */
+  background: var(--bg, #14161a);
+}
+
+.editor-grid .sidebar {
+  background: var(--panel-bg, #15171c);
+}
+
+.editor-grid .editor-center {
+  background: var(--bg, #14161a);
+}
+
+.editor-grid .graphpane-wrap {
+  /* s’assure que le graph prend toute la place centrale */
+  display: flex;
+  align-items: stretch;
+}
+
+.editor-grid .ruleeditor-wrap .panel,
+.editor-grid .editor-right .panel {
+  margin: 8px;
+}
+
+/* Splitters sobres */
+.splitter {
+  transition: background 120ms ease;
+}

@@ -2,86 +2,138 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Éditeur de Schéma – Bureau d'Études</title>
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <link rel="stylesheet" href="./style.css" />
+  <script src="https://d3js.org/d3.v7.min.js" defer></script>
 </head>
 <body>
-  <h1>🛠️ Éditeur de Schéma – Bureau d'Études</h1>
+  <header class="page-header">
+    <h1>🛠️ Éditeur de Schéma – Bureau d'Études</h1>
+    <nav aria-label="Navigation principale" class="header-actions">
+      <button id="theme-toggle" class="btn" aria-pressed="false" title="Basculer le thème">☀️ Thème clair</button>
+      <a class="btn" href="index.html" id="btn-back">Retour à l’interface commerciale</a>
+    </nav>
+  </header>
 
-  <div style="margin-bottom: 20px;">
-    <button onclick="window.location.href='index.html'">Retour à l’interface commerciale</button>
-  </div>
+  <main class="layout">
+    <!-- Panneau latéral (UI) -->
+    <aside class="sidebar" aria-label="Panneau de configuration">
+      <section class="panel">
+        <h2>Recherche</h2>
+        <label for="search-input-editor">Filtrer groupes / options</label>
+        <input id="search-input-editor" placeholder="Tape pour filtrer…" autocomplete="off" />
+        <p class="hint">Astuce : <kbd>R</kbd> pour recentrer l’aperçu.</p>
+      </section>
 
-  <div style="display: flex; gap: 40px;">
-    <!-- UI -->
-    <div>
-      <h2>Ajouter un Groupe</h2>
-      <input id="group-name" placeholder="Nom du groupe" />
-      <button id="add-group">Ajouter groupe</button>
+      <section class="panel">
+        <h2>Ajouter un Groupe</h2>
+        <label for="group-name">Nom du groupe</label>
+        <input id="group-name" placeholder="Nom du groupe" />
+        <button id="add-group" class="btn">Ajouter groupe</button>
+      </section>
 
-      <h2>Ajouter un Sous-groupe</h2>
-    <select id="parent-group-select"></select>
-    <input id="subgroup-name" placeholder="Nom du sous-groupe" />
-    <button id="add-subgroup">Ajouter sous-groupe</button>
-    <h3>Groupes et Sous-groupes existants</h3>
-    <div id="sidebar">
-    <div id="group-tree"></div>
-    </div>
+      <section class="panel">
+        <h2>Ajouter un Sous-groupe</h2>
+        <label for="parent-group-select">Groupe parent</label>
+        <select id="parent-group-select"></select>
 
-      <h2> Ajouter une Option</h2>
-      <select id="group-select"></select> <!-- Groupe principal -->
-      <select id="subgroup-select"></select> <!-- Sous-groupe -->
-      <input id="option-name" placeholder="Nom de l'option" />
-      <p>Statut Smart :
-  <select id="gamme-smart">
-    <option value="absent">Absent</option>
-    <option value="included">Présent</option>
-    <option value="optional">Optionnelle</option>
-  </select>
-</p>
-<p>Statut Mod :
-  <select id="gamme-mod">
-    <option value="absent">Absent</option>
-    <option value="included">Présent</option>
-    <option value="optional">Optionnelle</option>
-  </select>
-</p>
-<p>Statut Evo :
-  <select id="gamme-evo">
-    <option value="absent">Absent</option>
-    <option value="included">Présent</option>
-    <option value="optional">Optionnelle</option>
-  </select>
-</p>
+        <label for="subgroup-name">Nom du sous-groupe</label>
+        <input id="subgroup-name" placeholder="Nom du sous-groupe" />
+        <button id="add-subgroup" class="btn">Ajouter sous-groupe</button>
 
+        <h3>Groupes et Sous-groupes existants</h3>
+        <div id="sidebar">
+          <div id="group-tree"></div>
+        </div>
+      </section>
 
-      <button id="add-option">Ajouter option</button>
+      <section class="panel">
+        <h2>Ajouter une Option</h2>
+        <label for="group-select">Groupe</label>
+        <select id="group-select"></select>
 
-      <h2>Définir une Règle</h2>
-<select id="rule-from"></select>
-<select id="rule-type">
-  <option value="requires">Dépend de</option>
-  <option value="incompatible">Incompatible avec</option>
-</select>
-<select id="rule-to"></select>
-<input id="rule-set-name" placeholder="Nom du set de règles" />
-<button id="add-rule">Ajouter règle</button>
-<h3>Règles ajoutées</h3>
-<ul id="rules-list"></ul>
+        <label for="subgroup-select">Sous-groupe</label>
+        <select id="subgroup-select"></select>
 
-      <h2>Exporter</h2>
-      <button id="export-json">Télécharger gammes.js</button>
-    </div>
+        <label for="option-name">Nom de l'option</label>
+        <input id="option-name" placeholder="Nom de l'option" />
 
-    <div>
-      <h2>Aperçu</h2>
-      <button id="recenter-btn">Recentrer la vue</button>
-      <svg id="preview" width="1200" height="800" style="border:1px solid #ccc;"></svg>
-    </div>
-  </div>
+        <fieldset class="fieldset">
+          <legend>Statut par gamme</legend>
+          <div class="grid-3">
+            <label for="gamme-smart">Smart</label>
+            <select id="gamme-smart">
+              <option value="absent">Absent</option>
+              <option value="included">Présent</option>
+              <option value="optional">Optionnelle</option>
+            </select>
 
-  <!-- Entrée script -->
+            <label for="gamme-mod">Mod</label>
+            <select id="gamme-mod">
+              <option value="absent">Absent</option>
+              <option value="included">Présent</option>
+              <option value="optional">Optionnelle</option>
+            </select>
+
+            <label for="gamme-evo">Evo</label>
+            <select id="gamme-evo">
+              <option value="absent">Absent</option>
+              <option value="included">Présent</option>
+              <option value="optional">Optionnelle</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <button id="add-option" class="btn btn-primary">Ajouter option</button>
+      </section>
+
+      <section class="panel">
+        <h2>Définir une Règle</h2>
+        <div class="grid-3">
+          <label for="rule-from">De</label>
+          <select id="rule-from"></select>
+
+          <label for="rule-type">Type</label>
+          <select id="rule-type">
+            <option value="requires">Dépend de</option>
+            <option value="incompatible">Incompatible avec</option>
+          </select>
+
+          <label for="rule-to">À</label>
+          <select id="rule-to"></select>
+        </div>
+
+        <label for="rule-set-name">Nom du set de règles (optionnel)</label>
+        <input id="rule-set-name" placeholder="Nom du set de règles" />
+        <button id="add-rule" class="btn">Ajouter règle</button>
+
+        <h3>Règles ajoutées</h3>
+        <ul id="rules-list" class="rules"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Exporter</h2>
+        <div class="actions-row" style="display:flex; gap:8px; flex-wrap:wrap">
+          <button id="export-json" class="btn btn-primary">📥 Télécharger <strong>commercial.json</strong></button>
+          <button id="export-legacy" class="btn">↩️ Export legacy <strong>gammes.js</strong></button>
+        </div>
+        <p class="hint">Utilise <strong>commercial.json</strong> dans la version commerciale (recommandé).</p>
+      </section>
+    </aside>
+
+    <!-- Zone Aperçu -->
+    <section class="preview">
+      <div class="preview-toolbar">
+        <h2>Aperçu</h2>
+        <div class="right">
+          <button id="recenter-btn" class="btn">🔄 Recentrer la vue (R)</button>
+        </div>
+      </div>
+      <svg id="preview" width="1200" height="800" role="img" aria-label="Aperçu du schéma"></svg>
+    </section>
+  </main>
+
   <script type="module" src="js/editor-main.js"></script>
 </body>
 </html>

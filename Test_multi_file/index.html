@@ -1,31 +1,58 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <title>Diagramme Conditionnel Multi-Règles</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Interface commerciale – Schéma multi-règles</title>
   <link rel="stylesheet" href="style.css" />
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://d3js.org/d3.v7.min.js" defer></script>
 </head>
 <body>
-  <h1>Diagramme Conditionnel Multi-Règles</h1>
-  <div style="margin-bottom: 20px;">
-  <button onclick="window.location.href='editor.html'">🛠️ Ouvrir l’Éditeur de Schéma</button>
-    </div>
+  <header class="page-header">
+    <h1>📊 Interface commerciale – Schéma multi-règles</h1>
+    <nav aria-label="Actions" class="header-actions">
+      <button id="theme-toggle" class="btn" aria-pressed="false" title="Basculer le thème">☀️ Thème clair</button>
+      <a class="btn" href="editor.html" id="btn-editor">🛠️ Ouvrir l’Éditeur</a>
+    </nav>
+  </header>
 
-  <div id="controls">
-  <label for="import-gammes">📂 Importer un fichier gammes.js :</label>
-  <input type="file" id="import-gammes" accept=".js" />
-</div>
+  <main class="layout">
+    <aside class="sidebar" aria-label="Contrôles">
+      <section class="panel">
+        <h2>Importer un fichier</h2>
+        <label for="import-gammes">📂 Fichier de gammes</label>
+        <input type="file" id="import-gammes" accept=".json,.js" />
+        <p class="hint">Formats acceptés : <code>.json</code> (recommandé) ou ancien <code>gammes.js</code>.</p>
+      </section>
 
-  <svg id="graph" width="1200"></svg>
+      <section class="panel">
+        <h2>Ruleset</h2>
+        <div id="controls">
+          <!-- ruleset-ui.js injecte #ruleset-select ici -->
+        </div>
+        <div class="actions-row">
+          <button id="clear-selection" class="btn">🧹 Tout désélectionner</button>
+        </div>
+      </section>
 
-  <div id="gamme-summary"></div>
+      <section class="panel">
+        <h2>Recherche</h2>
+        <label for="search-input">Filtrer les options</label>
+        <input id="search-input" placeholder="Tape pour filtrer…" autocomplete="off" />
+      </section>
+    </aside>
 
-  <div style="margin-top: 10px;">
-  <button id="recenter-graph">🔄 Recentrer la vue</button>
-    </div>
-
-  <input type="file" id="importFile" style="display:none" />
+    <section class="preview">
+      <div class="preview-toolbar">
+        <h2>Aperçu</h2>
+        <div class="right">
+          <button id="recenter-graph" class="btn">🔄 Recentrer la vue (R)</button>
+        </div>
+      </div>
+      <svg id="graph" width="1200" height="800" role="img" aria-label="Graphe des options"></svg>
+      <div id="gamme-summary" class="panel" aria-live="polite"></div>
+    </section>
+  </main>
 
   <script type="module" src="js/main.js"></script>
 </body>

@@ -1,48 +1,21 @@
-import { gammes as baseGammes } from "../data/gammes.js";
-import { ruleSets as baseRuleSets } from "../data/rules.js";
+export const gammes = { Smart:{}, Mod:{}, Evo:{} };
+export const groupedCriteria = {};               // plat (IDs)
+export const groupedSubgroups = {};              // hiérarchique (IDs)
+export const optionLabels = {};                  // ✅ id -> name
 
+export const criteria = [];
+export const selected = new Set();
+export const nodes = [];
 
-export let criteria = [ /* ... */ ];
-export let groupedCriteria = { /* ... */ };
-export let selected = new Set();
-export let nodes = [];
-export let gammes = structuredClone(baseGammes);
 export const store = {
-  ruleSets: { ...baseRuleSets },
-  currentRules: {},
-  currentRuleSetName: "Standard"
+  ruleSets: { default: { rules: {} } },
+  currentRuleSetName: "default",
+  currentRules: {}
 };
 
-export function setupNodes() {
+export function setupNodes(){
   nodes.length = 0;
-
-  const groupSpacing = 300;
-  const itemSpacing = 120;
-  const nodeWidth = 100;
-
-  let groupIndex = 0;
-  for (const [groupName, items] of Object.entries(groupedCriteria)) {
-    const groupX = 100 + groupIndex * groupSpacing;
-    const nodeWidth = 100;
-
-    const totalHeight = (items.length - 1) * itemSpacing;
-    const baseY = 100 - totalHeight / 2;
-
-    const x = groupX + nodeWidth / 2; // 💡 Centrage horizontal
-
-    items.forEach((id, i) => {
-        const y = baseY + i * itemSpacing;
-
-        const gammeInfo = {};
-        for (const gammeName in gammes) {
-        const presence = gammes[gammeName][id] || { included: false, optional: false };
-        gammeInfo[gammeName] = { ...presence };
-        }
-
-        nodes.push({ id, x, y, gammeInfo, group: groupName });
-    });
-
-    groupIndex++;
-    }
-
+  Object.entries(groupedCriteria).forEach(([groupName, ids]) => {
+    (ids || []).forEach(id => nodes.push({ name: id, group: groupName })); // name = id (clé logique)
+  });
 }
