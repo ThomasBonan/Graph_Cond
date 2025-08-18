@@ -1,5 +1,90 @@
 import * as d3 from 'd3';
 
+// === Wrapping label optimisé pour SVG =======================================
+const NODE_PAD_X = 10, NODE_PAD_Y = 8, NODE_LINE_H = 14, GAMME_BAR_GAP = 4;
+
+/**
+ * Écrit `label` en plusieurs lignes dans `textSel` (tspans), limité à `innerW`.
+ * Aligne: 'middle' (centré). Retourne la HAUTEUR totale du bloc (label + padding).
+ */
+function wrapLabel(textSel, label, baseX, baseY, innerW, {
+  align = 'middle', padX = NODE_PAD_X, padY = NODE_PAD_Y, lineH = NODE_LINE_H
+} = {}) {
+  const anchor = align === 'middle' ? 'middle' : (align === 'right' ? 'end' : 'start');
+  const xBase  = align === 'middle' ? (baseX + padX + innerW/2)
+              : align === 'right'  ? (baseX + padX + innerW)
+              : (baseX + padX);
+
+  textSel.text('').attr('text-anchor', anchor); // on reconstruit
+  let line = [], lineNo = 0;
+
+  const tspan = () => textSel.append('tspan')
+    .attr('x', xBase)
+    .attr('y', lineNo === 0 ? (baseY + padY + lineH*0.85) : null)
+    .attr('dy', lineNo === 0 ? null : lineH);
+
+  let tsp = tspan();
+  const words = tokenize(label);
+
+  for (const w of words) {
+    if (w === '\n') { // retour dur
+      tsp.text(line.join(' ')); line = []; lineNo++; tsp = tspan(); continue;
+    }
+    line.push(w);
+    tsp.text(line.join(' '));
+    if (tsp.node().getComputedTextLength() > innerW) {
+      if (line.length === 1) {
+        // mot très long : découpe en segments avec tiret
+        const parts = chunkWord(w, innerW, tsp);
+        if (parts.length) {
+          tsp.text(parts.shift());
+          for (const p of parts) { lineNo++; tsp = tspan().text(p); }
+          line = [];
+          continue;
+        }
+      }
+      // renvoyer le dernier mot à la ligne suivante
+      line.pop();
+      tsp.text(line.join(' '));
+      line = [w];
+      lineNo++; tsp = tspan().text(w);
+      if (tsp.node().getComputedTextLength() > innerW) {
+        const parts = chunkWord(w, innerW, tsp);
+        tsp.text(parts.shift() || '');
+        for (const p of parts) { lineNo++; tsp = tspan().text(p); }
+        line = [];
+      }
+    }
+  }
+
+  const h = Math.ceil(textSel.node().getBBox().height);
+  return h + padY*2;
+
+  // Helpers
+  function tokenize(s) {
+    const parts = [];
+    s.split(/\n/).forEach((line, i, arr) => {
+      line.split(/(\s+|-)/).forEach(tok => { if (tok) parts.push(tok.trim()==='' ? ' ' : tok); });
+      if (i < arr.length - 1) parts.push('\n');
+    });
+    // compact espaces
+    return parts.reduce((acc,t)=>{ if(t==='\n'){acc.push(t);return acc;} const last=acc[acc.length-1]; if(last===' '&&t===' ')return acc; acc.push(t); return acc;},[]);
+  }
+  function chunkWord(word, innerW, tsp) {
+    const out=[]; let i=0;
+    while (i<word.length) {
+      let lo=1, hi=word.length-i, best=1;
+      while (lo<=hi) {
+        const mid=(lo+hi)>>1, slice=word.slice(i,i+mid)+(i+mid<word.length?'-':'');
+        tsp.text(slice);
+        if (tsp.node().getComputedTextLength() <= innerW) { best=mid; lo=mid+1; } else { hi=mid-1; }
+      }
+      const piece=word.slice(i,i+best); i+=best; out.push(i<word.length?piece+'-':piece);
+    }
+    return out;
+  }
+}
+
 export function renderGraph(svgEl, ctx) {
   const svg = d3.select(svgEl);
   svg.selectAll('*').remove();
@@ -21,11 +106,15 @@ export function renderGraph(svgEl, ctx) {
     rules = {},
     optionLabels = {},
     selected,
-    interactive = true,                // ⬅️ nouveau
+    interactive = true,
     onToggleGroup = () => {},
     onToggleSubgroup = () => {},
     onToggleSelect = () => {},
   } = ctx;
+
+  // === Const layout pour le wrapping =================================================
+  const subgroupWidth = 220, optionWidth = 200;
+  const padX=30, padY=30, gapX=16, gapY=16, itemGapY=100, groupSpacing=80;
 
   // selected -> Set
   let selectedValue = new Set();
@@ -54,10 +143,11 @@ export function renderGraph(svgEl, ctx) {
 
   // légende
   const legend = svg.append('g').attr('transform','translate(16,16)');
-  [{label:'Bloqué par dépendance',fill:cReqBg,border:cReqBorder,stripe:cReqBorder},
-   {label:'Incompatible',fill:cIncBg,border:cIncBorder,stripe:cIncBorder},
-   {label:'Optionnelle (gamme)',fill:'url(#hatch)',border:cStroke,stripe:cStroke}]
-  .forEach((it,i)=>{
+  [
+    {label:'Bloqué par dépendance',fill:cReqBg,border:cReqBorder,stripe:cReqBorder},
+    {label:'Incompatible',fill:cIncBg,border:cIncBorder,stripe:cIncBorder},
+    {label:'Optionnelle (gamme)',fill:'url(#hatch)',border:cStroke,stripe:cStroke}
+  ].forEach((it,i)=>{
     const y = i*22;
     legend.append('rect').attr('x',0).attr('y',y).attr('width',4).attr('height',14).attr('fill',it.stripe);
     legend.append('rect').attr('x',4).attr('y',y).attr('width',18).attr('height',14).attr('fill',it.fill).attr('stroke',it.border).attr('rx',2).attr('ry',2);
@@ -86,11 +176,9 @@ export function renderGraph(svgEl, ctx) {
   const showTip = (lines,x,y)=>{ tipEl.replaceChildren(...lines.map(t=>{const p=document.createElement('div');p.textContent=t;return p;})); tipEl.style.left=x+'px'; tipEl.style.top=y+'px'; tipEl.classList.add('visible'); tipEl.setAttribute('aria-hidden','false'); };
   const hideTip = ()=>{ tipEl.classList.remove('visible'); tipEl.setAttribute('aria-hidden','true'); };
 
-  // layout const
-  const subgroupWidth = 220, optionWidth = 200;
-  const padX=30, padY=30, gapX=16, gapY=16, itemGapY=100, groupSpacing=80;
-
-  let gx=50, drawn=0;
+  // layout groupes / sous-groupes
+  const gxStart = 50;
+  let gx=gxStart, drawn=0;
 
   for (const [groupName, v] of Object.entries(grouped)) {
     const subs = v?.subgroups || {};
@@ -177,8 +265,9 @@ export function renderGraph(svgEl, ctx) {
         const g = rootG.append('g').attr('data-id', id);
         const cursor = canClick ? 'pointer' : ((blocked || incompatibleWithSel) ? 'not-allowed' : 'default');
 
-        g.append('rect')
-          .attr('x',xOpt).attr('y',yOpt).attr('width',optionWidth).attr('height',48)
+        // === RECT de fond (hauteur ajustée après wrap) ======================
+        const rect = g.append('rect')
+          .attr('x',xOpt).attr('y',yOpt).attr('width',optionWidth).attr('height', 1) // provisoire
           .attr('fill',boxFill).attr('stroke',boxStroke).attr('rx',6).attr('ry',6).attr('stroke-width',strokeW)
           .style('opacity',faded)
           .style('cursor',cursor)
@@ -203,22 +292,42 @@ export function renderGraph(svgEl, ctx) {
           })
           .on('mouseleave', ()=> hideTip());
 
-        if (accent) g.append('rect').attr('x', xOpt-4).attr('y', yOpt).attr('width',4).attr('height',48).attr('fill',accent).style('opacity',faded).style('pointer-events','none');
+        // Accent gauche si besoin (hauteur ajustée après wrap)
+        if (accent) g.append('rect')
+          .attr('class','accent')
+          .attr('x', xOpt-4).attr('y', yOpt).attr('width',4).attr('height', 1)
+          .attr('fill',accent).style('opacity',faded).style('pointer-events','none');
 
-        g.append('text')
-          .attr('x',xOpt + optionWidth/2).attr('y', yOpt+30)
-          .attr('text-anchor','middle').attr('font-size','14px').attr('fill',cText)
+        // === LABEL multi-lignes ============================================
+        const txt = g.append('text')
+          .attr('font-size','14px').attr('fill',cText)
           .style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW)
           .style('font-weight', s && label.toLowerCase().includes(s) ? '700' : '500')
-          .text(label).style('opacity',faded).style('pointer-events','none');
+          .style('opacity',faded).style('pointer-events','none');
+
+        const innerW = optionWidth - NODE_PAD_X*2;
+        const labelBlockH = wrapLabel(txt, label, xOpt, yOpt, innerW, {
+          align:'middle', padX:NODE_PAD_X, padY:NODE_PAD_Y, lineH:NODE_LINE_H
+        });
+
+        // Ajuster hauteur du rect (et de l'accent) à la hauteur réelle du label
+        const rectH = Math.max(32, labelBlockH);
+        rect.attr('height', rectH);
+        if (accent) g.select('.accent').attr('height', rectH);
+
+        // === Cases Smart/Mod/Evo juste sous le label =======================
+        const caseW = optionWidth/3;
+        const yPos  = yOpt + rectH + GAMME_BAR_GAP;
 
         [{key:'Smart', color:cSmart}, {key:'Mod', color:cMod}, {key:'Evo', color:cEvo}].forEach((c, idx) => {
           const st = (gammes?.[c.key] || {})[id] || { included:false, optional:false };
-          const caseW = optionWidth/3; const yPos = yOpt + 52;
-          g.append('rect').attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
-            .attr('fill', st.included ? c.color : cBoxBg).attr('stroke', cStroke).style('opacity', faded).style('pointer-events','none');
+          g.append('rect')
+            .attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
+            .attr('fill', st.included ? c.color : cBoxBg).attr('stroke', cStroke)
+            .style('opacity', faded).style('pointer-events','none');
           if (st.optional) {
-            g.append('rect').attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
+            g.append('rect')
+              .attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
               .attr('fill','url(#hatch)').attr('pointer-events','none').style('opacity', faded);
           }
         });
@@ -231,6 +340,7 @@ export function renderGraph(svgEl, ctx) {
     gx += groupWidth + groupSpacing;
   }
 
+  // === recenter et footer (DANS renderGraph) =================================
   function recenter(){
     [vw, vh] = ensureSize(svgEl);
     zoom.extent([[0,0],[vw, vh]]);
