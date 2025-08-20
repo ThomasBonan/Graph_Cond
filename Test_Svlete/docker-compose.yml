@@ -1,0 +1,6 @@
+services:
+  web:
+    build: .
+    ports:
+      - "80:80"        # visite http://<IP_du_Raspberry>/
+    restart: unless-stopped

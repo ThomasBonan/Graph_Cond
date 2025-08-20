@@ -11,8 +11,6 @@
   leftW.subscribe(v  => localStorage.setItem('ed_leftW',  String(v)));
   graphW.subscribe(v => localStorage.setItem('ed_graphW', String(v)));
 
-  export let showRules = true; // par défaut: visible (utile si tu réutilises la sidebar ailleurs)
-
   let host;
 
   function startDrag(which, e) {

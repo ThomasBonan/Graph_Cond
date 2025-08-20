@@ -57,8 +57,7 @@
     <div class="mainpane">
       <!-- Outils de ligne (EXPORT GRAPHE) -->
       <div class="rowtools">
-        <span class="label">Export</span>
-        <ExportBar />  <!-- ✅ remet les boutons SVG / PNG / PDF -->
+        <ExportBar />
       </div>
 
       <div class="mainrow">

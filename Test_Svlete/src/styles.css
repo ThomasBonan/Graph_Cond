@@ -138,3 +138,18 @@ label { display:block; margin: 8px 0 4px; color: var(--c-text-muted); }
 .splitter {
   transition: background 120ms ease;
 }
+
+/* Sélection d’un nœud (clair) */
+:root {
+  --c-selected-bg: #dcfce7;   /* vert très clair (lisible) */
+  --c-selected-border: #16a34a;
+  --c-selected-stripe: #22c55e;
+}
+
+/* Sélection d’un nœud (sombre) */
+:root[data-theme="dark"],
+body[data-theme="dark"] {
+  --c-selected-bg: #064e3b;   /* vert foncé */
+  --c-selected-border: #34d399;
+  --c-selected-stripe: #10b981;
+}

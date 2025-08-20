@@ -1,11 +1,18 @@
 import * as d3 from 'd3';
 
-// === Wrapping label optimisé pour SVG =======================================
+// === Constantes layout / wrap ===============================================
 const NODE_PAD_X = 10, NODE_PAD_Y = 8, NODE_LINE_H = 14, GAMME_BAR_GAP = 4;
 
+// Titres de groupe (au-dessus du cadre)
+const GT_PAD_X = 6, GT_PAD_Y = 2, GT_LINE_H = 14, GT_GAP = 6; // gap vertical entre titre et cadre
+
+// Titres de sous-groupe (dans le cadre)
+const SGT_PAD_X = 8, SGT_PAD_Y = 4, SGT_LINE_H = 13, SGT_EXTRA_GAP = 6; // gap sous le titre
+
 /**
- * Écrit `label` en plusieurs lignes dans `textSel` (tspans), limité à `innerW`.
- * Aligne: 'middle' (centré). Retourne la HAUTEUR totale du bloc (label + padding).
+ * Wrap générique pour <text> SVG (utilise <tspan>). Retourne la hauteur du bloc (label + pads).
+ * textSel: d3.select(<text>), label: string, baseX/Y: position "bloc", innerW: largeur utile (sans padding)
+ * opts.align: 'left' | 'middle' | 'right'
  */
 function wrapLabel(textSel, label, baseX, baseY, innerW, {
   align = 'middle', padX = NODE_PAD_X, padY = NODE_PAD_Y, lineH = NODE_LINE_H
@@ -15,74 +22,73 @@ function wrapLabel(textSel, label, baseX, baseY, innerW, {
               : align === 'right'  ? (baseX + padX + innerW)
               : (baseX + padX);
 
-  textSel.text('').attr('text-anchor', anchor); // on reconstruit
+  textSel.text('').attr('text-anchor', anchor);
   let line = [], lineNo = 0;
 
-  const tspan = () => textSel.append('tspan')
+  const makeTspan = () => textSel.append('tspan')
     .attr('x', xBase)
-    .attr('y', lineNo === 0 ? (baseY + padY + lineH*0.85) : null)
+    .attr('y', lineNo === 0 ? (baseY + padY + lineH * 0.85) : null)
     .attr('dy', lineNo === 0 ? null : lineH);
 
-  let tsp = tspan();
+  let tsp = makeTspan();
   const words = tokenize(label);
 
   for (const w of words) {
     if (w === '\n') { // retour dur
-      tsp.text(line.join(' ')); line = []; lineNo++; tsp = tspan(); continue;
+      tsp.text(line.join(' ')); line = []; lineNo++; tsp = makeTspan(); continue;
     }
     line.push(w);
     tsp.text(line.join(' '));
     if (tsp.node().getComputedTextLength() > innerW) {
       if (line.length === 1) {
-        // mot très long : découpe en segments avec tiret
         const parts = chunkWord(w, innerW, tsp);
         if (parts.length) {
           tsp.text(parts.shift());
-          for (const p of parts) { lineNo++; tsp = tspan().text(p); }
+          for (const p of parts) { lineNo++; tsp = makeTspan().text(p); }
           line = [];
           continue;
         }
       }
-      // renvoyer le dernier mot à la ligne suivante
       line.pop();
       tsp.text(line.join(' '));
       line = [w];
-      lineNo++; tsp = tspan().text(w);
+      lineNo++; tsp = makeTspan().text(w);
       if (tsp.node().getComputedTextLength() > innerW) {
         const parts = chunkWord(w, innerW, tsp);
         tsp.text(parts.shift() || '');
-        for (const p of parts) { lineNo++; tsp = tspan().text(p); }
+        for (const p of parts) { lineNo++; tsp = makeTspan().text(p); }
         line = [];
       }
     }
   }
 
   const h = Math.ceil(textSel.node().getBBox().height);
-  return h + padY*2;
+  return h + padY * 2;
+}
 
-  // Helpers
-  function tokenize(s) {
-    const parts = [];
-    s.split(/\n/).forEach((line, i, arr) => {
-      line.split(/(\s+|-)/).forEach(tok => { if (tok) parts.push(tok.trim()==='' ? ' ' : tok); });
-      if (i < arr.length - 1) parts.push('\n');
-    });
-    // compact espaces
-    return parts.reduce((acc,t)=>{ if(t==='\n'){acc.push(t);return acc;} const last=acc[acc.length-1]; if(last===' '&&t===' ')return acc; acc.push(t); return acc;},[]);
-  }
-  function chunkWord(word, innerW, tsp) {
-    const out=[]; let i=0;
-    while (i<word.length) {
-      let lo=1, hi=word.length-i, best=1;
-      while (lo<=hi) {
-        const mid=(lo+hi)>>1, slice=word.slice(i,i+mid)+(i+mid<word.length?'-':'');
-        tsp.text(slice);
-        if (tsp.node().getComputedTextLength() <= innerW) { best=mid; lo=mid+1; } else { hi=mid-1; }
-      }
-      const piece=word.slice(i,i+best); i+=best; out.push(i<word.length?piece+'-':piece);
+// Helpers de wrap
+function tokenize(s) {
+  const parts = [];
+  s.split(/\n/).forEach((line, i, arr) => {
+    line.split(/(\s+|-)/).forEach(tok => { if (tok) parts.push(tok.trim()==='' ? ' ' : tok); });
+    if (i < arr.length - 1) parts.push('\n');
+  });
+  return parts.reduce((acc,t)=>{ if(t==='\n'){acc.push(t);return acc;} const last=acc[acc.length-1]; if(last===' '&&t===' ')return acc; acc.push(t); return acc;},[]);
+}
+function chunkWord(word, maxW, tsp) {
+  const out=[]; let i=0;
+  while (i<word.length) {
+    let lo=1, hi=word.length-i, best=1;
+    while (lo<=hi) {
+      const mid=(lo+hi)>>1;
+      const slice = word.slice(i,i+mid) + (i+mid<word.length ? '-' : '');
+      tsp.text(slice);
+      if (tsp.node().getComputedTextLength() <= maxW) { best=mid; lo=mid+1; } else { hi=mid-1; }
     }
-    return out;
+    const piece = word.slice(i,i+best); i += best;
+    out.push(i<word.length ? piece + '-' : piece);
   }
+  return out;
 }
 
 export function renderGraph(svgEl, ctx) {
@@ -112,7 +118,7 @@ export function renderGraph(svgEl, ctx) {
     onToggleSelect = () => {},
   } = ctx;
 
-  // === Const layout pour le wrapping =================================================
+  // === Const layout global ==================================================
   const subgroupWidth = 220, optionWidth = 200;
   const padX=30, padY=30, gapX=16, gapY=16, itemGapY=100, groupSpacing=80;
 
@@ -127,40 +133,63 @@ export function renderGraph(svgEl, ctx) {
 
   const s = (search || '').toLowerCase();
   const css = (v, d) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d;
-  const cText = css('--c-text','#e8eef5'), cTextMuted = css('--c-text-muted','#94a3b8');
-  const cStroke=css('--c-stroke','#4b5563'), cStrokeWeak=css('--c-stroke-weak','#3a4658'), cStrokeGroup=css('--c-stroke-group','#2c3645');
-  const cBoxBg=css('--c-box-bg','#0f172a');
-  const cReqBg=css('--c-rule-req-bg','#60a5fa'), cReqBorder=css('--c-rule-req-border','#2563eb');
-  const cIncBg=css('--c-rule-inc-bg','#f87171'), cIncBorder=css('--c-rule-inc-border','#dc2626');
-  const cSmart=css('--c-smart','#646363'), cMod=css('--c-mod','#da261b'), cEvo=css('--c-evo','#304e9c');
-  const halo = css('--c-text-halo','transparent'); const haloW = parseFloat(css('--c-text-halo-w','0'))||0;
 
-  // defs + blink
+  // palette courante
+  let cText = css('--c-text','#0f172a'), cTextMuted = css('--c-text-muted','#8b93a7');
+  let cStroke=css('--c-stroke','#d0d7e2'), cStrokeWeak=css('--c-stroke-weak','#e2e8f0'), cStrokeGroup=css('--c-stroke-group','#cbd5e1');
+  let cBoxBg=css('--c-box-bg','#ffffff');
+  let cReqBg=css('--c-rule-req-bg','#dbeafe'), cReqBorder=css('--c-rule-req-border','#2563eb');
+  let cIncBg=css('--c-rule-inc-bg','#fee2e2'), cIncBorder=css('--c-rule-inc-border','#dc2626');
+  let cSmart=css('--c-smart','#646363'), cMod=css('--c-mod','#da261b'), cEvo=css('--c-evo','#304e9c');
+  let halo = css('--c-text-halo','transparent'); let haloW = parseFloat(css('--c-text-halo-w','0'))||0;
+  let cSelBg = css('--c-selected-bg', '#dcfce7');
+  let cSelBorder = css('--c-selected-border', '#16a34a');
+  let cSelStripe = css('--c-selected-stripe', '#22c55e');
+
+  function readPalette() {
+    cText = css('--c-text','#0f172a'); cTextMuted = css('--c-text-muted','#8b93a7');
+    cStroke=css('--c-stroke','#d0d7e2'); cStrokeWeak=css('--c-stroke-weak','#e2e8f0'); cStrokeGroup=css('--c-stroke-group','#cbd5e1');
+    cBoxBg=css('--c-box-bg','#ffffff');
+    cReqBg=css('--c-rule-req-bg','#dbeafe'); cReqBorder=css('--c-rule-req-border','#2563eb');
+    cIncBg=css('--c-rule-inc-bg','#fee2e2'); cIncBorder=css('--c-rule-inc-border','#dc2626');
+    cSmart=css('--c-smart','#646363'); cMod=css('--c-mod','#da261b'); cEvo=css('--c-evo','#304e9c');
+    halo = css('--c-text-halo','transparent'); haloW = parseFloat(css('--c-text-halo-w','0'))||0;
+    cSelBg = css('--c-selected-bg', '#dcfce7'); cSelBorder = css('--c-selected-border', '#16a34a'); cSelStripe = css('--c-selected-stripe', '#22c55e');
+  }
+
+  // ---------- defs + blink
   const defs = svg.append('defs');
   defs.append('pattern').attr('id','hatch').attr('patternUnits','userSpaceOnUse').attr('width',6).attr('height',6)
     .append('path').attr('d','M0,0 l6,6').attr('stroke',cTextMuted).attr('stroke-width',1);
   defs.append('style').text(`@keyframes blink {0%{opacity:1}50%{opacity:.25}100%{opacity:1}} .blink{animation:blink .9s ease-in-out 0s 1}`);
+  const glow = defs.append('filter').attr('id','selglow');
+  glow.append('feDropShadow')
+    .attr('dx', 0).attr('dy', 0)
+    .attr('stdDeviation', 2.5)
+    .attr('flood-color', cSelBorder)
+    .attr('flood-opacity', 0.6);
 
-  // légende
+  // ---------- légende
   const legend = svg.append('g').attr('transform','translate(16,16)');
   [
-    {label:'Bloqué par dépendance',fill:cReqBg,border:cReqBorder,stripe:cReqBorder},
-    {label:'Incompatible',fill:cIncBg,border:cIncBorder,stripe:cIncBorder},
-    {label:'Optionnelle (gamme)',fill:'url(#hatch)',border:cStroke,stripe:cStroke}
+    {key:'req',label:'Bloqué par dépendance',fill:cReqBg,border:cReqBorder,stripe:cReqBorder},
+    {key:'inc',label:'Incompatible',fill:cIncBg,border:cIncBorder,stripe:cIncBorder},
+    {key:'opt',label:'Optionnelle (gamme)',fill:'url(#hatch)',border:cStroke,stripe:cStroke}
   ].forEach((it,i)=>{
     const y = i*22;
-    legend.append('rect').attr('x',0).attr('y',y).attr('width',4).attr('height',14).attr('fill',it.stripe);
-    legend.append('rect').attr('x',4).attr('y',y).attr('width',18).attr('height',14).attr('fill',it.fill).attr('stroke',it.border).attr('rx',2).attr('ry',2);
-    legend.append('text').attr('x',26).attr('y',y+11).attr('fill',cText).attr('font-size',12).style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW).text(it.label);
+    legend.append('rect').attr('class',`legend-stripe ${it.key}`).attr('x',0).attr('y',y).attr('width',4).attr('height',14).attr('fill',it.stripe);
+    legend.append('rect').attr('class',`legend-box ${it.key}`).attr('x',4).attr('y',y).attr('width',18).attr('height',14).attr('fill',it.fill).attr('stroke',it.border).attr('rx',2).attr('ry',2);
+    legend.append('text').attr('class','legend-label').attr('x',26).attr('y',y+11).attr('fill',cText).attr('font-size',12)
+      .style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW).text(it.label);
   });
 
-  // zoom
+  // ---------- zoom + conteneur
   const rootG = svg.append('g').attr('id','zoom-container');
   const zoom = d3.zoom().scaleExtent([0.5,2]).extent([[0,0],[vw, vh]]).on('zoom', (e) => rootG.attr('transform', e.transform));
   svg.call(zoom);
   svg.on('recenter', () => recenter());
 
-  // flash infra
+  // ---------- flash infra
   const nodeMap = new Map();
   svg.on('flash', (event) => {
     const ids = (event?.detail || []);
@@ -170,70 +199,150 @@ export function renderGraph(svgEl, ctx) {
     });
   });
 
-  // tooltip
+  // ---------- tooltip
   let tipEl = document.getElementById('tooltip');
   if (!tipEl) { tipEl = document.createElement('div'); tipEl.id='tooltip'; tipEl.setAttribute('aria-hidden','true'); document.body.appendChild(tipEl); }
   const showTip = (lines,x,y)=>{ tipEl.replaceChildren(...lines.map(t=>{const p=document.createElement('div');p.textContent=t;return p;})); tipEl.style.left=x+'px'; tipEl.style.top=y+'px'; tipEl.classList.add('visible'); tipEl.setAttribute('aria-hidden','false'); };
   const hideTip = ()=>{ tipEl.classList.remove('visible'); tipEl.setAttribute('aria-hidden','true'); };
 
-  // layout groupes / sous-groupes
+  // ---------- layout groupes / sous-groupes
   const gxStart = 50;
   let gx=gxStart, drawn=0;
 
   for (const [groupName, v] of Object.entries(grouped)) {
-    const subs = v?.subgroups || {};
-    const entries = [
-      ...Object.entries(subs).map(([sg, ids]) => ({ sg, ids })),
-      ...(Array.isArray(v?.root) && v.root.length ? [{ sg: '__root', ids: v.root }] : [])
-    ];
+  const subs = v?.subgroups || {};
+  const entries = [
+    ...Object.entries(subs).map(([sg, ids]) => ({ sg, ids })),
+    ...(Array.isArray(v?.root) && v.root.length ? [{ sg: '__root', ids: v.root }] : [])
+  ];
 
-    const groupCollapsed = !!collapsed[groupName]?.__group;
+  const groupCollapsed = !!collapsed[groupName]?.__group;
 
-    const filteredEntries = entries.map(({ sg, ids }) => {
-      const list = ids || [];
-      const filtered = s ? list.filter(id => (optionLabels[id] || id).toLowerCase().includes(s)) : list;
-      const count = filtered.length;
-      const height = Math.max(count * itemGapY + 40, 50);
-      const key = sg === '__root' ? '__root' : sg;
-      const collapsedSG = !!collapsed[groupName]?.[key];
-      return { sg, key, ids: filtered, count, height, collapsed: collapsedSG };
-    }).filter(e => !s || e.count > 0);
+  // Prépare les entrées filtrées (utile si non plié)
+  const filteredEntries = entries.map(({ sg, ids }) => {
+    const list = ids || [];
+    const filtered = s ? list.filter(id => (optionLabels[id] || id).toLowerCase().includes(s)) : list;
+    const count = filtered.length;
+    const height = Math.max(count * itemGapY + 40, 50);
+    const key = sg === '__root' ? '__root' : sg;
+    const collapsedSG = !!collapsed[groupName]?.[key];
+    return { sg, key, ids: filtered, count, height, collapsed: collapsedSG };
+  }).filter(e => !s || e.count > 0);
 
-    if (filteredEntries.length === 0) { gx += 250; continue; }
-
-    const cols = groupCollapsed ? 1 : Math.min(3, Math.max(1, Math.ceil(Math.sqrt(filteredEntries.length))));
-    const colHeights = new Array(cols).fill(0), positions = [];
-    filteredEntries.forEach(entry=>{
-      let col=0; for (let i=1;i<cols;i++) if (colHeights[i]<colHeights[col]) col=i;
-      const x=gx+padX+col*(subgroupWidth+gapX), y=padY+colHeights[col];
-      positions.push({ ...entry, x, y });
-      colHeights[col] += (entry.collapsed ? 40 : entry.height) + gapY;
-    });
-
-    const innerWidth  = cols*subgroupWidth + (cols-1)*gapX;
-    const innerHeight = Math.max(...colHeights) - gapY;
-    const groupWidth  = innerWidth + 2*padX;
-    const groupHeight = innerHeight + 2*padY;
+  // === MODE GROUPE PLIÉ : on ne dessine QUE la boîte du groupe + son titre ===
+  if (groupCollapsed) {
+    // largeur compacte : 1 colonne de sous-groupe fictive
+    const groupWidth  = 1 * subgroupWidth + 2 * padX;
+    const groupHeight = 2 * padY;     // hauteur minimale (le cadre)
     const groupY = 60;
 
-    rootG.append('rect').attr('x',gx).attr('y',groupY).attr('width',groupWidth).attr('height',groupHeight)
-      .attr('fill','none').attr('stroke',cStrokeGroup).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
+    // cadre
+    rootG.append('rect')
+      .attr('class','group-box')
+      .attr('x',gx).attr('y',groupY)
+      .attr('width',groupWidth).attr('height',groupHeight)
+      .attr('fill','none').attr('stroke',cStrokeGroup)
+      .attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
-    const title = rootG.append('text').attr('x',gx+groupWidth/2).attr('y',groupY-10)
-      .text(groupName).attr('font-size',16).attr('font-weight','bold').attr('text-anchor','middle').attr('fill',cText)
-      .style('cursor','pointer').style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW);
-    title.on('click',()=> onToggleGroup(groupName));
+    // titre WRAP au-dessus du cadre
+    const gTitle = rootG.append('text')
+      .attr('class','group-title')
+      .attr('font-size',16).attr('font-weight','bold')
+      .style('cursor','pointer').style('paint-order','stroke fill')
+      .attr('stroke',halo).attr('stroke-width',haloW)
+      .attr('fill', cText)
+      .on('click',()=> onToggleGroup(groupName));
 
+    const gTitleInnerW = groupWidth - GT_PAD_X * 2;
+    const gTitleH = wrapLabel(gTitle, groupName, gx, groupY, gTitleInnerW, {
+      align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
+    });
+    gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
+
+    // passe au groupe suivant (on NE dessine PAS les sous-groupes)
+    gx += groupWidth + groupSpacing;
+    continue;
+  }
+
+  // === MODE GROUPE OUVERT (logique existante) ===============================
+  if (filteredEntries.length === 0) { gx += 250; continue; }
+
+  const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(filteredEntries.length))));
+  const colHeights = new Array(cols).fill(0), positions = [];
+  filteredEntries.forEach(entry=>{
+    let col=0; for (let i=1;i<cols;i++) if (colHeights[i]<colHeights[col]) col=i;
+    const x=gx+padX+col*(subgroupWidth+gapX), y=padY+colHeights[col];
+    positions.push({ ...entry, x, y });
+    colHeights[col] += (entry.collapsed ? 40 : entry.height) + gapY;
+  });
+
+  const innerWidth  = cols*subgroupWidth + (cols-1)*gapX;
+  const innerHeight = Math.max(...colHeights) - gapY;
+  const groupWidth  = innerWidth + 2*padX;
+  const groupHeight = innerHeight + 2*padY;
+  const groupY = 60;
+
+  // cadre de groupe
+  rootG.append('rect').attr('class','group-box')
+    .attr('x',gx).attr('y',groupY).attr('width',groupWidth).attr('height',groupHeight)
+    .attr('fill','none').attr('stroke',cStrokeGroup).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
+
+  // titre WRAP au-dessus
+  const gTitle = rootG.append('text')
+    .attr('class','group-title')
+    .attr('font-size',16).attr('font-weight','bold')
+    .style('cursor','pointer').style('paint-order','stroke fill')
+    .attr('stroke',halo).attr('stroke-width',haloW)
+    .attr('fill', cText)
+    .on('click',()=> onToggleGroup(groupName));
+  const gTitleInnerW = groupWidth - GT_PAD_X * 2;
+  const gTitleH = wrapLabel(gTitle, groupName, gx, groupY, gTitleInnerW, {
+    align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
+  });
+  gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
+
+  // sous-groupes (inchangé)
+  positions.forEach(({ sg, key, ids, x, y, height, collapsed: isCollapsed }) => {
+    const sx=x, sy=groupY+y, h=isCollapsed?40:height;
+    const subRect = rootG.append('rect').attr('class','subgroup-box')
+      .attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
+      .attr('fill','none').attr('stroke',cStrokeWeak).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
+
+    // ... (la suite de ton rendu sous-groupe / options reste identique)
+    //     (titre sous-groupe wrap, items, etc.)
+    //     (ne touche rien d’autre ici)
+    // >>> conserve exactement ton code existant à partir d’ici <<<
+  });
+
+  gx += groupWidth + groupSpacing;
+}
+
+
+    // --- Sous-groupes ---
     positions.forEach(({ sg, key, ids, x, y, height, collapsed: isCollapsed }) => {
       const sx=x, sy=groupY+y, h=isCollapsed?40:height;
-      rootG.append('rect').attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
+      const subRect = rootG.append('rect').attr('class','subgroup-box').attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
         .attr('fill','none').attr('stroke',cStrokeWeak).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
+      // === Titre de sous-groupe WRAP (dans la boîte) ===
+      let headerH = 0;
       if (sg !== '__root') {
-        const sgTitle = rootG.append('text').attr('x', sx + subgroupWidth/2).attr('y', sy + 15)
-          .text(sg).attr('font-size',13).attr('font-weight','bold').attr('text-anchor','middle').attr('fill',cText)
-          .style('cursor','pointer');
+        const sgTitle = rootG.append('text')
+          .attr('class','subgroup-title')
+          .attr('font-size',13).attr('font-weight','bold')
+          .style('cursor','pointer').style('paint-order','stroke fill')
+          .attr('stroke',halo).attr('stroke-width',haloW)
+          .attr('fill', cText);
+
+        const sgtInnerW = subgroupWidth - SGT_PAD_X * 2;
+        const sgtH = wrapLabel(sgTitle, sg, sx, sy, sgtInnerW, {
+          align:'middle', padX: SGT_PAD_X, padY: SGT_PAD_Y, lineH: SGT_LINE_H
+        });
+
+        headerH = Math.max(20, sgtH + SGT_EXTRA_GAP);
         sgTitle.on('click',()=> onToggleSubgroup(groupName, key));
+      } else {
+        headerH = 12; // un petit offset pour le root
       }
 
       if (isCollapsed) return;
@@ -241,7 +350,7 @@ export function renderGraph(svgEl, ctx) {
       ids.forEach((id,i)=>{
         drawn++;
         const label = optionLabels[id] || id;
-        const yOpt = sy + 30 + i*itemGapY;
+        const yOpt = sy + headerH + i*itemGapY; // <<<< OFFSET dynamique sous le titre wrap
         const xOpt = sx + (subgroupWidth - optionWidth)/2;
 
         const reqs = (rules[id]?.requires) || [];
@@ -252,23 +361,34 @@ export function renderGraph(svgEl, ctx) {
           (rules[s]?.incompatible_with || []).includes(id)
         );
 
-        let boxFill=cBoxBg, boxStroke=cStroke, accent=null;
-        if (blocked) { boxFill=cReqBg; boxStroke=cReqBorder; accent=cReqBorder; }
-        else if (incompatibleWithSel) { boxFill=cIncBg; boxStroke=cIncBorder; accent=cIncBorder; }
-
         const isSel = selectedValue?.has?.(id);
-        const strokeW = isSel ? 2.5 : 1.0;
-        const faded = s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1;
-
         const canClick = interactive && !blocked && !incompatibleWithSel;
 
-        const g = rootG.append('g').attr('data-id', id);
+        let status = 'normal';
+        if (blocked) status = 'blocked';
+        else if (incompatibleWithSel) status = 'incompatible';
+        if (isSel && status === 'normal') status = 'selected';
+
+        // style
+        let boxFill = cBoxBg, boxStroke = cStroke, accent = null, filterSel = null;
+        if (status === 'blocked') { boxFill=cReqBg; boxStroke=cReqBorder; accent=cReqBorder; }
+        else if (status === 'incompatible') { boxFill=cIncBg; boxStroke=cIncBorder; accent=cIncBorder; }
+        else if (status === 'selected') { boxFill=cSelBg; boxStroke=cSelBorder; accent=cSelStripe; filterSel='url(#selglow)'; }
+
+        const strokeW = isSel ? 3.0 : 1.0;
+        const faded = isSel ? 1 : (s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1);
+
+        const g = rootG.append('g').attr('data-id', id).attr('data-status', status);
+
         const cursor = canClick ? 'pointer' : ((blocked || incompatibleWithSel) ? 'not-allowed' : 'default');
 
-        // === RECT de fond (hauteur ajustée après wrap) ======================
         const rect = g.append('rect')
-          .attr('x',xOpt).attr('y',yOpt).attr('width',optionWidth).attr('height', 1) // provisoire
-          .attr('fill',boxFill).attr('stroke',boxStroke).attr('rx',6).attr('ry',6).attr('stroke-width',strokeW)
+          .attr('class','node-bg')
+          .attr('x',xOpt).attr('y',yOpt)
+          .attr('width',optionWidth).attr('height', 1)
+          .attr('fill',boxFill).attr('stroke',boxStroke)
+          .attr('rx',6).attr('ry',6).attr('stroke-width',strokeW)
+          .attr('filter', filterSel || null)
           .style('opacity',faded)
           .style('cursor',cursor)
           .on('click', () => { if (canClick) onToggleSelect(id); })
@@ -292,14 +412,18 @@ export function renderGraph(svgEl, ctx) {
           })
           .on('mouseleave', ()=> hideTip());
 
-        // Accent gauche si besoin (hauteur ajustée après wrap)
-        if (accent) g.append('rect')
+        if (canClick && !isSel) {
+          rect.on('mouseenter', function(){ d3.select(this).attr('stroke-width', 2).attr('stroke', cSelBorder); })
+              .on('mouseleave', function(){ d3.select(this).attr('stroke-width', strokeW).attr('stroke', boxStroke); });
+        }
+
+        if (status !== 'normal') g.append('rect')
           .attr('class','accent')
           .attr('x', xOpt-4).attr('y', yOpt).attr('width',4).attr('height', 1)
           .attr('fill',accent).style('opacity',faded).style('pointer-events','none');
 
-        // === LABEL multi-lignes ============================================
         const txt = g.append('text')
+          .attr('class','node-label')
           .attr('font-size','14px').attr('fill',cText)
           .style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW)
           .style('font-weight', s && label.toLowerCase().includes(s) ? '700' : '500')
@@ -310,37 +434,41 @@ export function renderGraph(svgEl, ctx) {
           align:'middle', padX:NODE_PAD_X, padY:NODE_PAD_Y, lineH:NODE_LINE_H
         });
 
-        // Ajuster hauteur du rect (et de l'accent) à la hauteur réelle du label
         const rectH = Math.max(32, labelBlockH);
         rect.attr('height', rectH);
-        if (accent) g.select('.accent').attr('height', rectH);
+        g.select('.accent').attr('height', rectH);
 
-        // === Cases Smart/Mod/Evo juste sous le label =======================
         const caseW = optionWidth/3;
         const yPos  = yOpt + rectH + GAMME_BAR_GAP;
 
         [{key:'Smart', color:cSmart}, {key:'Mod', color:cMod}, {key:'Evo', color:cEvo}].forEach((c, idx) => {
           const st = (gammes?.[c.key] || {})[id] || { included:false, optional:false };
           g.append('rect')
+            .attr('class','gbar')
+            .attr('data-key', c.key)
+            .attr('data-included', st.included ? '1' : '0')
             .attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
             .attr('fill', st.included ? c.color : cBoxBg).attr('stroke', cStroke)
-            .style('opacity', faded).style('pointer-events','none');
+            .style('opacity', 1).style('pointer-events','none');
           if (st.optional) {
             g.append('rect')
               .attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
-              .attr('fill','url(#hatch)').attr('pointer-events','none').style('opacity', faded);
+              .attr('fill','url(#hatch)').attr('pointer-events','none').style('opacity', 1);
           }
         });
-
-        // map pour flash
-        nodeMap.set(id, g);
       });
+
+      // Si le titre wrap prend beaucoup de place, on peut agrandir visuellement la box
+      if (headerH > 30) {
+        const delta = headerH - 30;
+        subRect.attr('height', h + delta);
+      }
     });
 
     gx += groupWidth + groupSpacing;
   }
 
-  // === recenter et footer (DANS renderGraph) =================================
+  // === recenter / footer ====================================================
   function recenter(){
     [vw, vh] = ensureSize(svgEl);
     zoom.extent([[0,0],[vw, vh]]);
@@ -362,8 +490,71 @@ export function renderGraph(svgEl, ctx) {
     setTimeout(recenter, 0);
   }
 
+  // === Recoloration (thème) =================================================
+  function recolor() {
+    readPalette();
+
+    // defs
+    svg.select('pattern#hatch path').attr('stroke', cTextMuted);
+    svg.select('filter#selglow feDropShadow').attr('flood-color', cSelBorder);
+
+    // légende
+    legend.selectAll('text.legend-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
+    legend.select('.legend-stripe.req').attr('fill', cReqBorder);
+    legend.select('.legend-stripe.inc').attr('fill', cIncBorder);
+    legend.select('.legend-stripe.opt').attr('fill', cStroke);
+    legend.select('.legend-box.req').attr('fill', cReqBg).attr('stroke', cReqBorder);
+    legend.select('.legend-box.inc').attr('fill', cIncBg).attr('stroke', cIncBorder);
+    legend.select('.legend-box.opt').attr('fill', 'url(#hatch)').attr('stroke', cStroke);
+
+    // cadres
+    rootG.selectAll('rect.group-box').attr('stroke', cStrokeGroup);
+    rootG.selectAll('rect.subgroup-box').attr('stroke', cStrokeWeak);
+
+    // titres groupe / sous-groupe
+    rootG.selectAll('text.group-title, text.subgroup-title')
+      .attr('fill', cText)
+      .attr('stroke', halo)
+      .attr('stroke-width', haloW);
+
+    // labels nœuds
+    rootG.selectAll('text.node-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
+
+    // nœuds
+    rootG.selectAll('g[data-id]').each(function(){
+      const g = d3.select(this);
+      const status = g.attr('data-status') || 'normal';
+      const rect = g.select('rect.node-bg');
+      const accent = g.select('rect.accent');
+
+      let fill=cBoxBg, border=cStroke, stripe=null, filter=null;
+      if (status === 'blocked') { fill=cReqBg; border=cReqBorder; stripe=cReqBorder; }
+      else if (status === 'incompatible') { fill=cIncBg; border=cIncBorder; stripe=cIncBorder; }
+      else if (status === 'selected') { fill=cSelBg; border=cSelBorder; stripe=cSelStripe; filter='url(#selglow)'; }
+
+      rect.attr('fill', fill).attr('stroke', border).attr('filter', filter || null);
+      if (!accent.empty()) accent.attr('fill', stripe);
+
+      // barres Smart/Mod/Evo
+      g.selectAll('rect.gbar').each(function(){
+        const bar = d3.select(this);
+        const included = bar.attr('data-included') === '1';
+        const key = bar.attr('data-key');
+        let color = cBoxBg;
+        if (included) color = key === 'Smart' ? cSmart : key === 'Mod' ? cMod : cEvo;
+        bar.attr('fill', color).attr('stroke', cStroke);
+      });
+    });
+  }
+
+  // observer du thème
+  const mo = new MutationObserver(() => queueMicrotask(recolor));
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  recolor();
+
   return () => {
     try { const tip = document.getElementById('tooltip'); tip && tip.classList.remove('visible'); } catch {}
+    mo.disconnect();
     svg.selectAll('*').remove();
     if (unsubscribeSelected) unsubscribeSelected();
   };

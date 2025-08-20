@@ -1,0 +1,20 @@
+:80 {
+  root * /srv
+  encode zstd gzip
+  file_server
+
+  # SPA: si le fichier n'existe pas, renvoyer index.html
+  try_files {path} /index.html
+
+  # Cache long pour assets fingerprintés Vite
+  @assets path /assets/*
+  header @assets Cache-Control "public, max-age=31536000, immutable"
+
+  # Service worker: pas de cache agressif
+  @sw path /sw.js
+  header @sw Cache-Control "no-cache"
+
+  # Manifest au bon MIME (par précaution)
+  @manifest path *.webmanifest
+  header @manifest Content-Type "application/manifest+json"
+}

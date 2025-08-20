@@ -8,6 +8,7 @@
   } from '../lib/stores.js';
   import { renderGraph } from '../lib/d3/graph.js';
   import { graphEl } from '../lib/stores.js';
+  import { theme } from '../lib/stores.js';
 
   let svg;
   let cleanup = () => {};
