@@ -1,13 +1,14 @@
+// graph.js — version recompactée & corrigée
 import * as d3 from 'd3';
 
 // === Constantes layout / wrap ===============================================
 const NODE_PAD_X = 10, NODE_PAD_Y = 8, NODE_LINE_H = 14, GAMME_BAR_GAP = 4;
 
 // Titres de groupe (au-dessus du cadre)
-const GT_PAD_X = 6, GT_PAD_Y = 2, GT_LINE_H = 14, GT_GAP = 6; // gap vertical entre titre et cadre
+const GT_PAD_X = 6, GT_PAD_Y = 2, GT_LINE_H = 14, GT_GAP = 6;
 
 // Titres de sous-groupe (dans le cadre)
-const SGT_PAD_X = 8, SGT_PAD_Y = 4, SGT_LINE_H = 13, SGT_EXTRA_GAP = 6; // gap sous le titre
+const SGT_PAD_X = 8, SGT_PAD_Y = 4, SGT_LINE_H = 13, SGT_EXTRA_GAP = 6;
 
 /**
  * Wrap générique pour <text> SVG (utilise <tspan>). Retourne la hauteur du bloc (label + pads).
@@ -66,7 +67,7 @@ function wrapLabel(textSel, label, baseX, baseY, innerW, {
   return h + padY * 2;
 }
 
-// Helpers de wrap
+// Helpers de wrap -------------------------------------------------------------
 function tokenize(s) {
   const parts = [];
   s.split(/\n/).forEach((line, i, arr) => {
@@ -91,6 +92,7 @@ function chunkWord(word, maxW, tsp) {
   return out;
 }
 
+// =============================================================================
 export function renderGraph(svgEl, ctx) {
   const svg = d3.select(svgEl);
   svg.selectAll('*').remove();
@@ -163,11 +165,7 @@ export function renderGraph(svgEl, ctx) {
     .append('path').attr('d','M0,0 l6,6').attr('stroke',cTextMuted).attr('stroke-width',1);
   defs.append('style').text(`@keyframes blink {0%{opacity:1}50%{opacity:.25}100%{opacity:1}} .blink{animation:blink .9s ease-in-out 0s 1}`);
   const glow = defs.append('filter').attr('id','selglow');
-  glow.append('feDropShadow')
-    .attr('dx', 0).attr('dy', 0)
-    .attr('stdDeviation', 2.5)
-    .attr('flood-color', cSelBorder)
-    .attr('flood-opacity', 0.6);
+  glow.append('feDropShadow').attr('dx',0).attr('dy',0).attr('stdDeviation',2.5).attr('flood-color',cSelBorder).attr('flood-opacity',0.6);
 
   // ---------- légende
   const legend = svg.append('g').attr('transform','translate(16,16)');
@@ -210,41 +208,80 @@ export function renderGraph(svgEl, ctx) {
   let gx=gxStart, drawn=0;
 
   for (const [groupName, v] of Object.entries(grouped)) {
-  const subs = v?.subgroups || {};
-  const entries = [
-    ...Object.entries(subs).map(([sg, ids]) => ({ sg, ids })),
-    ...(Array.isArray(v?.root) && v.root.length ? [{ sg: '__root', ids: v.root }] : [])
-  ];
+    const subs = v?.subgroups || {};
+    const entries = [
+      ...Object.entries(subs).map(([sg, ids]) => ({ sg, ids })),
+      ...(Array.isArray(v?.root) && v.root.length ? [{ sg: '__root', ids: v.root }] : [])
+    ];
 
-  const groupCollapsed = !!collapsed[groupName]?.__group;
+    const groupCollapsed = !!collapsed[groupName]?.__group;
 
-  // Prépare les entrées filtrées (utile si non plié)
-  const filteredEntries = entries.map(({ sg, ids }) => {
-    const list = ids || [];
-    const filtered = s ? list.filter(id => (optionLabels[id] || id).toLowerCase().includes(s)) : list;
-    const count = filtered.length;
-    const height = Math.max(count * itemGapY + 40, 50);
-    const key = sg === '__root' ? '__root' : sg;
-    const collapsedSG = !!collapsed[groupName]?.[key];
-    return { sg, key, ids: filtered, count, height, collapsed: collapsedSG };
-  }).filter(e => !s || e.count > 0);
+    // Prépare les entrées filtrées (utile si non plié)
+    const filteredEntries = entries.map(({ sg, ids }) => {
+      const list = ids || [];
+      const filtered = s ? list.filter(id => (optionLabels[id] || id).toLowerCase().includes(s)) : list;
+      const count = filtered.length;
+      const height = Math.max(count * itemGapY + 40, 50);
+      const key = sg === '__root' ? '__root' : sg;
+      const collapsedSG = !!collapsed[groupName]?.[key];
+      return { sg, key, ids: filtered, count, height, collapsed: collapsedSG };
+    }).filter(e => !s || e.count > 0);
 
-  // === MODE GROUPE PLIÉ : on ne dessine QUE la boîte du groupe + son titre ===
-  if (groupCollapsed) {
-    // largeur compacte : 1 colonne de sous-groupe fictive
-    const groupWidth  = 1 * subgroupWidth + 2 * padX;
-    const groupHeight = 2 * padY;     // hauteur minimale (le cadre)
+    // === GROUPE PLIÉ : boîte + titre seulement
+    if (groupCollapsed) {
+      const groupWidth  = 1 * subgroupWidth + 2 * padX;
+      const groupHeight = 2 * padY;
+      const groupY = 60;
+
+      rootG.append('rect')
+        .attr('class','group-box')
+        .attr('x',gx).attr('y',groupY)
+        .attr('width',groupWidth).attr('height',groupHeight)
+        .attr('fill','none').attr('stroke',cStrokeGroup)
+        .attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
+
+      const gTitle = rootG.append('text')
+        .attr('class','group-title')
+        .attr('font-size',16).attr('font-weight','bold')
+        .style('cursor','pointer').style('paint-order','stroke fill')
+        .attr('stroke',halo).attr('stroke-width',haloW)
+        .attr('fill', cText)
+        .on('click',()=> onToggleGroup(groupName));
+
+      const gTitleInnerW = groupWidth - GT_PAD_X * 2;
+      const gTitleH = wrapLabel(gTitle, groupName, gx, groupY, gTitleInnerW, {
+        align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
+      });
+      gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
+
+      gx += groupWidth + groupSpacing;
+      continue;
+    }
+
+    // === GROUPE OUVERT
+    if (filteredEntries.length === 0) { gx += 250; continue; }
+
+    const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(filteredEntries.length))));
+    const colHeights = new Array(cols).fill(0), positions = [];
+    filteredEntries.forEach(entry=>{
+      let col=0; for (let i=1;i<cols;i++) if (colHeights[i]<colHeights[col]) col=i;
+      const x=gx+padX+col*(subgroupWidth+gapX), y=padY+colHeights[col];
+      positions.push({ ...entry, x, y });
+      colHeights[col] += (entry.collapsed ? 40 : entry.height) + gapY;
+    });
+
+    const innerWidth  = cols*subgroupWidth + (cols-1)*gapX;
+    const innerHeight = Math.max(...colHeights) - gapY;
+    const groupWidth  = innerWidth + 2*padX;
+    const groupHeight = innerHeight + 2*padY;
     const groupY = 60;
 
-    // cadre
-    rootG.append('rect')
-      .attr('class','group-box')
-      .attr('x',gx).attr('y',groupY)
-      .attr('width',groupWidth).attr('height',groupHeight)
-      .attr('fill','none').attr('stroke',cStrokeGroup)
-      .attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
+    // cadre de groupe
+    rootG.append('rect').attr('class','group-box')
+      .attr('x',gx).attr('y',groupY).attr('width',groupWidth).attr('height',groupHeight)
+      .attr('fill','none').attr('stroke',cStrokeGroup).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
-    // titre WRAP au-dessus du cadre
+    // titre WRAP au-dessus
     const gTitle = rootG.append('text')
       .attr('class','group-title')
       .attr('font-size',16).attr('font-weight','bold')
@@ -252,79 +289,20 @@ export function renderGraph(svgEl, ctx) {
       .attr('stroke',halo).attr('stroke-width',haloW)
       .attr('fill', cText)
       .on('click',()=> onToggleGroup(groupName));
-
     const gTitleInnerW = groupWidth - GT_PAD_X * 2;
     const gTitleH = wrapLabel(gTitle, groupName, gx, groupY, gTitleInnerW, {
       align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
     });
     gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
 
-    // passe au groupe suivant (on NE dessine PAS les sous-groupes)
-    gx += groupWidth + groupSpacing;
-    continue;
-  }
-
-  // === MODE GROUPE OUVERT (logique existante) ===============================
-  if (filteredEntries.length === 0) { gx += 250; continue; }
-
-  const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(filteredEntries.length))));
-  const colHeights = new Array(cols).fill(0), positions = [];
-  filteredEntries.forEach(entry=>{
-    let col=0; for (let i=1;i<cols;i++) if (colHeights[i]<colHeights[col]) col=i;
-    const x=gx+padX+col*(subgroupWidth+gapX), y=padY+colHeights[col];
-    positions.push({ ...entry, x, y });
-    colHeights[col] += (entry.collapsed ? 40 : entry.height) + gapY;
-  });
-
-  const innerWidth  = cols*subgroupWidth + (cols-1)*gapX;
-  const innerHeight = Math.max(...colHeights) - gapY;
-  const groupWidth  = innerWidth + 2*padX;
-  const groupHeight = innerHeight + 2*padY;
-  const groupY = 60;
-
-  // cadre de groupe
-  rootG.append('rect').attr('class','group-box')
-    .attr('x',gx).attr('y',groupY).attr('width',groupWidth).attr('height',groupHeight)
-    .attr('fill','none').attr('stroke',cStrokeGroup).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
-
-  // titre WRAP au-dessus
-  const gTitle = rootG.append('text')
-    .attr('class','group-title')
-    .attr('font-size',16).attr('font-weight','bold')
-    .style('cursor','pointer').style('paint-order','stroke fill')
-    .attr('stroke',halo).attr('stroke-width',haloW)
-    .attr('fill', cText)
-    .on('click',()=> onToggleGroup(groupName));
-  const gTitleInnerW = groupWidth - GT_PAD_X * 2;
-  const gTitleH = wrapLabel(gTitle, groupName, gx, groupY, gTitleInnerW, {
-    align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
-  });
-  gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
-
-  // sous-groupes (inchangé)
-  positions.forEach(({ sg, key, ids, x, y, height, collapsed: isCollapsed }) => {
-    const sx=x, sy=groupY+y, h=isCollapsed?40:height;
-    const subRect = rootG.append('rect').attr('class','subgroup-box')
-      .attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
-      .attr('fill','none').attr('stroke',cStrokeWeak).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
-
-    // ... (la suite de ton rendu sous-groupe / options reste identique)
-    //     (titre sous-groupe wrap, items, etc.)
-    //     (ne touche rien d’autre ici)
-    // >>> conserve exactement ton code existant à partir d’ici <<<
-  });
-
-  gx += groupWidth + groupSpacing;
-}
-
-
     // --- Sous-groupes ---
     positions.forEach(({ sg, key, ids, x, y, height, collapsed: isCollapsed }) => {
       const sx=x, sy=groupY+y, h=isCollapsed?40:height;
-      const subRect = rootG.append('rect').attr('class','subgroup-box').attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
+      const subRect = rootG.append('rect').attr('class','subgroup-box')
+        .attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
         .attr('fill','none').attr('stroke',cStrokeWeak).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
-      // === Titre de sous-groupe WRAP (dans la boîte) ===
+      // Titre de sous-groupe
       let headerH = 0;
       if (sg !== '__root') {
         const sgTitle = rootG.append('text')
@@ -342,15 +320,16 @@ export function renderGraph(svgEl, ctx) {
         headerH = Math.max(20, sgtH + SGT_EXTRA_GAP);
         sgTitle.on('click',()=> onToggleSubgroup(groupName, key));
       } else {
-        headerH = 12; // un petit offset pour le root
+        headerH = 12;
       }
 
       if (isCollapsed) return;
 
+      // Items
       ids.forEach((id,i)=>{
         drawn++;
         const label = optionLabels[id] || id;
-        const yOpt = sy + headerH + i*itemGapY; // <<<< OFFSET dynamique sous le titre wrap
+        const yOpt = sy + headerH + i*itemGapY;
         const xOpt = sx + (subgroupWidth - optionWidth)/2;
 
         const reqs = (rules[id]?.requires) || [];
@@ -379,6 +358,7 @@ export function renderGraph(svgEl, ctx) {
         const faded = isSel ? 1 : (s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1);
 
         const g = rootG.append('g').attr('data-id', id).attr('data-status', status);
+        nodeMap.set(id, g.node()); // utile pour le flash
 
         const cursor = canClick ? 'pointer' : ((blocked || incompatibleWithSel) ? 'not-allowed' : 'default');
 
@@ -458,7 +438,7 @@ export function renderGraph(svgEl, ctx) {
         });
       });
 
-      // Si le titre wrap prend beaucoup de place, on peut agrandir visuellement la box
+      // Ajuste la box si le header est haut
       if (headerH > 30) {
         const delta = headerH - 30;
         subRect.attr('height', h + delta);
@@ -490,7 +470,7 @@ export function renderGraph(svgEl, ctx) {
     setTimeout(recenter, 0);
   }
 
-  // === Recoloration (thème) =================================================
+  // === Recoloration (thème) ================================================
   function recolor() {
     readPalette();
 
@@ -511,13 +491,11 @@ export function renderGraph(svgEl, ctx) {
     rootG.selectAll('rect.group-box').attr('stroke', cStrokeGroup);
     rootG.selectAll('rect.subgroup-box').attr('stroke', cStrokeWeak);
 
-    // titres groupe / sous-groupe
+    // titres
     rootG.selectAll('text.group-title, text.subgroup-title')
-      .attr('fill', cText)
-      .attr('stroke', halo)
-      .attr('stroke-width', haloW);
+      .attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
 
-    // labels nœuds
+    // labels
     rootG.selectAll('text.node-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
 
     // nœuds
@@ -552,6 +530,7 @@ export function renderGraph(svgEl, ctx) {
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   recolor();
 
+  // cleanup pour hot-reload / navigation
   return () => {
     try { const tip = document.getElementById('tooltip'); tip && tip.classList.remove('visible'); } catch {}
     mo.disconnect();
