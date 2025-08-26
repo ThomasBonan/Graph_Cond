@@ -1,18 +1,15 @@
-// graph.js — version complète (sous-groupes en ligne + fix flash)
+// graph.js — sous-groupes en ligne + flash fix + préservation du zoom
 import * as d3 from 'd3';
+
+// Mémorise l'état du zoom par <svg> (persistant entre appels de renderGraph)
+const _zoomState = new WeakMap(); // key: svgEl -> { transform: d3.ZoomTransform|null, userZoomed: boolean }
 
 // === Constantes layout / wrap ===============================================
 const NODE_PAD_X = 10, NODE_PAD_Y = 8, NODE_LINE_H = 14, GAMME_BAR_GAP = 4;
-
-// Titres de groupe (au-dessus du cadre)
 const GT_PAD_X = 6, GT_PAD_Y = 2, GT_LINE_H = 14, GT_GAP = 6;
-
-// Titres de sous-groupe (dans le cadre)
 const SGT_PAD_X = 8, SGT_PAD_Y = 4, SGT_LINE_H = 13, SGT_EXTRA_GAP = 6;
 
-/**
- * Wrap générique pour <text> SVG (utilise <tspan>). Retourne la hauteur du bloc (label + pads).
- */
+/** Wrap générique pour <text> SVG (utilise <tspan>). Retourne la hauteur du bloc (label + pads). */
 function wrapLabel(textSel, label, baseX, baseY, innerW, {
   align = 'middle', padX = NODE_PAD_X, padY = NODE_PAD_Y, lineH = NODE_LINE_H
 } = {}) {
@@ -84,6 +81,10 @@ export function renderGraph(svgEl, ctx) {
   const svg = d3.select(svgEl);
   svg.selectAll('*').remove();
 
+  // récupère ou init l'état de zoom/pan
+  const st = _zoomState.get(svgEl) || { transform: null, userZoomed: false };
+  const preserveZoom = ctx?.preserveZoom !== false; // true par défaut
+
   const ensureSize = (el) => {
     if (!el) return [1200, 800];
     const w = el.clientWidth  || parseInt(el.getAttribute('width'))  || 1200;
@@ -154,6 +155,22 @@ export function renderGraph(svgEl, ctx) {
   const glow = defs.append('filter').attr('id','selglow');
   glow.append('feDropShadow').attr('dx',0).attr('dy',0).attr('stdDeviation',2.5).attr('flood-color',cSelBorder).attr('flood-opacity',0.6);
 
+  // ---------- zoom + conteneur
+  const rootG = svg.append('g').attr('id','zoom-container');
+  const zoom = d3.zoom()
+    .scaleExtent([0.5, 2])
+    .extent([[0,0],[vw, vh]])
+    .on('zoom', (e) => {
+      rootG.attr('transform', e.transform);
+      // mémorise le dernier transform et le fait que l'utilisateur a manipulé
+      st.transform = e.transform;
+      st.userZoomed = true;
+      _zoomState.set(svgEl, st);
+    });
+
+  svg.call(zoom);
+  svg.on('recenter', () => recenter());
+
   // ---------- légende
   const legend = svg.append('g').attr('transform','translate(16,16)');
   [
@@ -168,12 +185,6 @@ export function renderGraph(svgEl, ctx) {
       .style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW).text(it.label);
   });
 
-  // ---------- zoom + conteneur
-  const rootG = svg.append('g').attr('id','zoom-container');
-  const zoom = d3.zoom().scaleExtent([0.5,2]).extent([[0,0],[vw, vh]]).on('zoom', (e) => rootG.attr('transform', e.transform));
-  svg.call(zoom);
-  svg.on('recenter', () => recenter());
-
   // ---------- flash infra
   const nodeMap = new Map();
   svg.on('flash', (event) => {
@@ -181,7 +192,7 @@ export function renderGraph(svgEl, ctx) {
     ids.forEach((id) => {
       const ref = nodeMap.get(id);
       if (!ref) return;
-      const sel = typeof ref.classed === 'function' ? ref : d3.select(ref);
+      const sel = typeof ref.classed === 'function' ? ref : d3.select(ref); // tolère anciens DOM nodes
       if (!sel || !sel.node()) return;
       sel.classed('blink', true);
       setTimeout(() => sel.classed('blink', false), 900);
@@ -218,11 +229,13 @@ export function renderGraph(svgEl, ctx) {
       return { sg, key, ids: filtered, count, height, collapsed: collapsedSG };
     }).filter(e => !s || e.count > 0);
 
-    // === GROUPE PLIÉ : boîte + titre seulement
+    // === GROUPE PLIÉ
     if (groupCollapsed) {
       const groupWidth  = 1 * subgroupWidth + 2 * padX;
       const groupHeight = 2 * padY;
       const groupY = 60;
+
+      svg.append('g'); // pour cohérence future
 
       rootG.append('rect')
         .attr('class','group-box')
@@ -271,7 +284,7 @@ export function renderGraph(svgEl, ctx) {
       .attr('x',gx).attr('y',groupY).attr('width',groupWidth).attr('height',groupHeight)
       .attr('fill','none').attr('stroke',cStrokeGroup).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
-    // titre WRAP au-dessus
+    // titre
     const gTitle = rootG.append('text')
       .attr('class','group-title')
       .attr('font-size',16).attr('font-weight','bold')
@@ -348,7 +361,7 @@ export function renderGraph(svgEl, ctx) {
         const faded = isSel ? 1 : (s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1);
 
         const g = rootG.append('g').attr('data-id', id).attr('data-status', status);
-        nodeMap.set(id, g); // <-- stocker la SELECTION d3 (fix flash)
+        nodeMap.set(id, g); // stocke la SELECTION d3 (fix flash)
 
         const cursor = canClick ? 'pointer' : ((blocked || incompatibleWithSel) ? 'not-allowed' : 'default');
 
@@ -449,14 +462,27 @@ export function renderGraph(svgEl, ctx) {
     const scale = Math.min(vw/(bbox.width+120), vh/(bbox.height+120), 1);
     const tx = (vw - bbox.width * scale)/2 - bbox.x * scale;
     const ty = (vh - bbox.height * scale)/2 - bbox.y * scale;
-    svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
+
+    svg.transition().duration(450).call(zoom.transform, t);
+
+    // recentrage programmatique : on remet le flag
+    st.transform = t;
+    st.userZoomed = false;
+    _zoomState.set(svgEl, st);
   }
 
   if (drawn === 0) {
     svg.append('text').attr('x',32).attr('y',96).attr('fill',cTextMuted).attr('font-size',14)
       .text('Aucune option à afficher. Ajoutez une option dans un groupe ou un sous-groupe.');
   } else {
-    setTimeout(recenter, 0);
+    if (preserveZoom && st.transform && st.userZoomed) {
+      // Restaure le zoom/pan précédent (pas de recentrage)
+      svg.call(zoom.transform, st.transform);
+    } else {
+      // Premier rendu (ou preserveZoom=false) → recentre
+      setTimeout(recenter, 0);
+    }
   }
 
   // === Recoloration (thème) ================================================
@@ -466,6 +492,7 @@ export function renderGraph(svgEl, ctx) {
     svg.select('pattern#hatch path').attr('stroke', cTextMuted);
     svg.select('filter#selglow feDropShadow').attr('flood-color', cSelBorder);
 
+    // légende
     legend.selectAll('text.legend-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
     legend.select('.legend-stripe.req').attr('fill', cReqBorder);
     legend.select('.legend-stripe.inc').attr('fill', cIncBorder);
@@ -474,14 +501,18 @@ export function renderGraph(svgEl, ctx) {
     legend.select('.legend-box.inc').attr('fill', cIncBg).attr('stroke', cIncBorder);
     legend.select('.legend-box.opt').attr('fill', 'url(#hatch)').attr('stroke', cStroke);
 
+    // cadres
     rootG.selectAll('rect.group-box').attr('stroke', cStrokeGroup);
     rootG.selectAll('rect.subgroup-box').attr('stroke', cStrokeWeak);
 
+    // titres
     rootG.selectAll('text.group-title, text.subgroup-title')
       .attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
 
+    // labels
     rootG.selectAll('text.node-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
 
+    // nœuds
     rootG.selectAll('g[data-id]').each(function(){
       const g = d3.select(this);
       const status = g.attr('data-status') || 'normal';
@@ -496,6 +527,7 @@ export function renderGraph(svgEl, ctx) {
       rect.attr('fill', fill).attr('stroke', border).attr('filter', filter || null);
       if (!accent.empty()) accent.attr('fill', stripe);
 
+      // barres Smart/Mod/Evo
       g.selectAll('rect.gbar').each(function(){
         const bar = d3.select(this);
         const included = bar.attr('data-included') === '1';
@@ -507,10 +539,12 @@ export function renderGraph(svgEl, ctx) {
     });
   }
 
+  // observer du thème
   const mo = new MutationObserver(() => queueMicrotask(recolor));
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   recolor();
 
+  // cleanup
   return () => {
     try { const tip = document.getElementById('tooltip'); tip && tip.classList.remove('visible'); } catch {}
     mo.disconnect();
