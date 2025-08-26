@@ -1,4 +1,4 @@
-// graph.js — sous-groupes en ligne + flash fix + préservation du zoom
+// graph.js — sous-groupes en ligne + flash fix + préservation du zoom + dépendances grisées (SANS barre latérale)
 import * as d3 from 'd3';
 
 // Mémorise l'état du zoom par <svg> (persistant entre appels de renderGraph)
@@ -124,11 +124,11 @@ export function renderGraph(svgEl, ctx) {
   const s = (search || '').toLowerCase();
   const css = (v, d) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d;
 
-  // palette courante
+  // palette courante (⚠ valeurs par défaut: dépendance = GRIS)
   let cText = css('--c-text','#0f172a'), cTextMuted = css('--c-text-muted','#8b93a7');
   let cStroke=css('--c-stroke','#d0d7e2'), cStrokeWeak=css('--c-stroke-weak','#e2e8f0'), cStrokeGroup=css('--c-stroke-group','#cbd5e1');
   let cBoxBg=css('--c-box-bg','#ffffff');
-  let cReqBg=css('--c-rule-req-bg','#dbeafe'), cReqBorder=css('--c-rule-req-border','#2563eb');
+  let cReqBg=css('--c-rule-req-bg','#f1f5f9'), cReqBorder=css('--c-rule-req-border','#94a3b8'); // <-- gris
   let cIncBg=css('--c-rule-inc-bg','#fee2e2'), cIncBorder=css('--c-rule-inc-border','#dc2626');
   let cSmart=css('--c-smart','#646363'), cMod=css('--c-mod','#da261b'), cEvo=css('--c-evo','#304e9c');
   let halo = css('--c-text-halo','transparent'); let haloW = parseFloat(css('--c-text-halo-w','0'))||0;
@@ -140,7 +140,8 @@ export function renderGraph(svgEl, ctx) {
     cText = css('--c-text','#0f172a'); cTextMuted = css('--c-text-muted','#8b93a7');
     cStroke=css('--c-stroke','#d0d7e2'); cStrokeWeak=css('--c-stroke-weak','#e2e8f0'); cStrokeGroup=css('--c-stroke-group','#cbd5e1');
     cBoxBg=css('--c-box-bg','#ffffff');
-    cReqBg=css('--c-rule-req-bg','#dbeafe'); cReqBorder=css('--c-rule-req-border','#2563eb');
+    // dépendance grisée
+    cReqBg=css('--c-rule-req-bg','#f1f5f9'); cReqBorder=css('--c-rule-req-border','#94a3b8');
     cIncBg=css('--c-rule-inc-bg','#fee2e2'); cIncBorder=css('--c-rule-inc-border','#dc2626');
     cSmart=css('--c-smart','#646363'); cMod=css('--c-mod','#da261b'); cEvo=css('--c-evo','#304e9c');
     halo = css('--c-text-halo','transparent'); haloW = parseFloat(css('--c-text-halo-w','0'))||0;
@@ -234,8 +235,6 @@ export function renderGraph(svgEl, ctx) {
       const groupWidth  = 1 * subgroupWidth + 2 * padX;
       const groupHeight = 2 * padY;
       const groupY = 60;
-
-      svg.append('g'); // pour cohérence future
 
       rootG.append('rect')
         .attr('class','group-box')
@@ -352,10 +351,10 @@ export function renderGraph(svgEl, ctx) {
         if (isSel && status === 'normal') status = 'selected';
 
         // style
-        let boxFill = cBoxBg, boxStroke = cStroke, accent = null, filterSel = null;
-        if (status === 'blocked') { boxFill=cReqBg; boxStroke=cReqBorder; accent=cReqBorder; }
-        else if (status === 'incompatible') { boxFill=cIncBg; boxStroke=cIncBorder; accent=cIncBorder; }
-        else if (status === 'selected') { boxFill=cSelBg; boxStroke=cSelBorder; accent=cSelStripe; filterSel='url(#selglow)'; }
+        let boxFill = cBoxBg, boxStroke = cStroke, filterSel = null;
+        if (status === 'blocked') { boxFill=cReqBg; boxStroke=cReqBorder; }
+        else if (status === 'incompatible') { boxFill=cIncBg; boxStroke=cIncBorder; }
+        else if (status === 'selected') { boxFill=cSelBg; boxStroke=cSelBorder; filterSel='url(#selglow)'; }
 
         const strokeW = isSel ? 3.0 : 1.0;
         const faded = isSel ? 1 : (s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1);
@@ -400,11 +399,6 @@ export function renderGraph(svgEl, ctx) {
               .on('mouseleave', function(){ d3.select(this).attr('stroke-width', strokeW).attr('stroke', boxStroke); });
         }
 
-        if (status !== 'normal') g.append('rect')
-          .attr('class','accent')
-          .attr('x', xOpt-4).attr('y', yOpt).attr('width',4).attr('height', 1)
-          .attr('fill',accent).style('opacity',faded).style('pointer-events','none');
-
         const txt = g.append('text')
           .attr('class','node-label')
           .attr('font-size','14px').attr('fill',cText)
@@ -419,7 +413,6 @@ export function renderGraph(svgEl, ctx) {
 
         const rectH = Math.max(32, labelBlockH);
         rect.attr('height', rectH);
-        g.select('.accent').attr('height', rectH);
 
         const caseW = optionWidth/3;
         const yPos  = yOpt + rectH + GAMME_BAR_GAP;
@@ -517,15 +510,13 @@ export function renderGraph(svgEl, ctx) {
       const g = d3.select(this);
       const status = g.attr('data-status') || 'normal';
       const rect = g.select('rect.node-bg');
-      const accent = g.select('rect.accent');
 
-      let fill=cBoxBg, border=cStroke, stripe=null, filter=null;
-      if (status === 'blocked') { fill=cReqBg; border=cReqBorder; stripe=cReqBorder; }
-      else if (status === 'incompatible') { fill=cIncBg; border=cIncBorder; stripe=cIncBorder; }
-      else if (status === 'selected') { fill=cSelBg; border=cSelBorder; stripe=cSelStripe; filter='url(#selglow)'; }
+      let fill=cBoxBg, border=cStroke, filter=null;
+      if (status === 'blocked') { fill=cReqBg; border=cReqBorder; }
+      else if (status === 'incompatible') { fill=cIncBg; border=cIncBorder; }
+      else if (status === 'selected') { fill=cSelBg; border=cSelBorder; filter='url(#selglow)'; }
 
       rect.attr('fill', fill).attr('stroke', border).attr('filter', filter || null);
-      if (!accent.empty()) accent.attr('fill', stripe);
 
       // barres Smart/Mod/Evo
       g.selectAll('rect.gbar').each(function(){
