@@ -1,4 +1,4 @@
-// graph.js — version recompactée & corrigée
+// graph.js — version complète (sous-groupes en ligne + fix flash)
 import * as d3 from 'd3';
 
 // === Constantes layout / wrap ===============================================
@@ -12,8 +12,6 @@ const SGT_PAD_X = 8, SGT_PAD_Y = 4, SGT_LINE_H = 13, SGT_EXTRA_GAP = 6;
 
 /**
  * Wrap générique pour <text> SVG (utilise <tspan>). Retourne la hauteur du bloc (label + pads).
- * textSel: d3.select(<text>), label: string, baseX/Y: position "bloc", innerW: largeur utile (sans padding)
- * opts.align: 'left' | 'middle' | 'right'
  */
 function wrapLabel(textSel, label, baseX, baseY, innerW, {
   align = 'middle', padX = NODE_PAD_X, padY = NODE_PAD_Y, lineH = NODE_LINE_H
@@ -35,30 +33,19 @@ function wrapLabel(textSel, label, baseX, baseY, innerW, {
   const words = tokenize(label);
 
   for (const w of words) {
-    if (w === '\n') { // retour dur
-      tsp.text(line.join(' ')); line = []; lineNo++; tsp = makeTspan(); continue;
-    }
+    if (w === '\n') { tsp.text(line.join(' ')); line = []; lineNo++; tsp = makeTspan(); continue; }
     line.push(w);
     tsp.text(line.join(' '));
     if (tsp.node().getComputedTextLength() > innerW) {
       if (line.length === 1) {
         const parts = chunkWord(w, innerW, tsp);
-        if (parts.length) {
-          tsp.text(parts.shift());
-          for (const p of parts) { lineNo++; tsp = makeTspan().text(p); }
-          line = [];
-          continue;
-        }
+        if (parts.length) { tsp.text(parts.shift()); for (const p of parts) { lineNo++; tsp = makeTspan().text(p); } line = []; continue; }
       }
-      line.pop();
-      tsp.text(line.join(' '));
-      line = [w];
-      lineNo++; tsp = makeTspan().text(w);
+      line.pop(); tsp.text(line.join(' '));
+      line = [w]; lineNo++; tsp = makeTspan().text(w);
       if (tsp.node().getComputedTextLength() > innerW) {
         const parts = chunkWord(w, innerW, tsp);
-        tsp.text(parts.shift() || '');
-        for (const p of parts) { lineNo++; tsp = makeTspan().text(p); }
-        line = [];
+        tsp.text(parts.shift() || ''); for (const p of parts) { lineNo++; tsp = makeTspan().text(p); } line = [];
       }
     }
   }
@@ -190,10 +177,14 @@ export function renderGraph(svgEl, ctx) {
   // ---------- flash infra
   const nodeMap = new Map();
   svg.on('flash', (event) => {
-    const ids = (event?.detail || []);
-    ids.forEach(id => {
-      const g = nodeMap.get(id);
-      if (g) { g.classed('blink', true); setTimeout(() => g.classed('blink', false), 900); }
+    const ids = event?.detail || [];
+    ids.forEach((id) => {
+      const ref = nodeMap.get(id);
+      if (!ref) return;
+      const sel = typeof ref.classed === 'function' ? ref : d3.select(ref);
+      if (!sel || !sel.node()) return;
+      sel.classed('blink', true);
+      setTimeout(() => sel.classed('blink', false), 900);
     });
   });
 
@@ -216,7 +207,7 @@ export function renderGraph(svgEl, ctx) {
 
     const groupCollapsed = !!collapsed[groupName]?.__group;
 
-    // Prépare les entrées filtrées (utile si non plié)
+    // Prépare les entrées filtrées
     const filteredEntries = entries.map(({ sg, ids }) => {
       const list = ids || [];
       const filtered = s ? list.filter(id => (optionLabels[id] || id).toLowerCase().includes(s)) : list;
@@ -258,22 +249,21 @@ export function renderGraph(svgEl, ctx) {
       continue;
     }
 
-    // === GROUPE OUVERT
+    // === GROUPE OUVERT — SOUS-GROUPES EN LIGNE =================================
     if (filteredEntries.length === 0) { gx += 250; continue; }
 
-    const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(filteredEntries.length))));
-    const colHeights = new Array(cols).fill(0), positions = [];
-    filteredEntries.forEach(entry=>{
-      let col=0; for (let i=1;i<cols;i++) if (colHeights[i]<colHeights[col]) col=i;
-      const x=gx+padX+col*(subgroupWidth+gapX), y=padY+colHeights[col];
-      positions.push({ ...entry, x, y });
-      colHeights[col] += (entry.collapsed ? 40 : entry.height) + gapY;
+    const cols = filteredEntries.length;
+    const positions = filteredEntries.map((entry, i) => {
+      const boxH = (entry.collapsed ? 40 : entry.height);
+      const x = gx + padX + i * (subgroupWidth + gapX);
+      const y = padY; // tous sur la même ligne
+      return { ...entry, x, y, boxH };
     });
 
-    const innerWidth  = cols*subgroupWidth + (cols-1)*gapX;
-    const innerHeight = Math.max(...colHeights) - gapY;
-    const groupWidth  = innerWidth + 2*padX;
-    const groupHeight = innerHeight + 2*padY;
+    const innerWidth  = cols * subgroupWidth + (cols - 1) * gapX;
+    const innerHeight = Math.max(...positions.map(p => p.boxH));
+    const groupWidth  = innerWidth + 2 * padX;
+    const groupHeight = innerHeight + 2 * padY;
     const groupY = 60;
 
     // cadre de groupe
@@ -296,8 +286,8 @@ export function renderGraph(svgEl, ctx) {
     gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
 
     // --- Sous-groupes ---
-    positions.forEach(({ sg, key, ids, x, y, height, collapsed: isCollapsed }) => {
-      const sx=x, sy=groupY+y, h=isCollapsed?40:height;
+    positions.forEach(({ sg, key, ids, x, y, boxH, height, collapsed: isCollapsed }) => {
+      const sx=x, sy=groupY+y, h=isCollapsed?40:(boxH ?? height);
       const subRect = rootG.append('rect').attr('class','subgroup-box')
         .attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
         .attr('fill','none').attr('stroke',cStrokeWeak).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
@@ -358,7 +348,7 @@ export function renderGraph(svgEl, ctx) {
         const faded = isSel ? 1 : (s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1);
 
         const g = rootG.append('g').attr('data-id', id).attr('data-status', status);
-        nodeMap.set(id, g.node()); // utile pour le flash
+        nodeMap.set(id, g); // <-- stocker la SELECTION d3 (fix flash)
 
         const cursor = canClick ? 'pointer' : ((blocked || incompatibleWithSel) ? 'not-allowed' : 'default');
 
@@ -438,7 +428,6 @@ export function renderGraph(svgEl, ctx) {
         });
       });
 
-      // Ajuste la box si le header est haut
       if (headerH > 30) {
         const delta = headerH - 30;
         subRect.attr('height', h + delta);
@@ -474,11 +463,9 @@ export function renderGraph(svgEl, ctx) {
   function recolor() {
     readPalette();
 
-    // defs
     svg.select('pattern#hatch path').attr('stroke', cTextMuted);
     svg.select('filter#selglow feDropShadow').attr('flood-color', cSelBorder);
 
-    // légende
     legend.selectAll('text.legend-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
     legend.select('.legend-stripe.req').attr('fill', cReqBorder);
     legend.select('.legend-stripe.inc').attr('fill', cIncBorder);
@@ -487,18 +474,14 @@ export function renderGraph(svgEl, ctx) {
     legend.select('.legend-box.inc').attr('fill', cIncBg).attr('stroke', cIncBorder);
     legend.select('.legend-box.opt').attr('fill', 'url(#hatch)').attr('stroke', cStroke);
 
-    // cadres
     rootG.selectAll('rect.group-box').attr('stroke', cStrokeGroup);
     rootG.selectAll('rect.subgroup-box').attr('stroke', cStrokeWeak);
 
-    // titres
     rootG.selectAll('text.group-title, text.subgroup-title')
       .attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
 
-    // labels
     rootG.selectAll('text.node-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
 
-    // nœuds
     rootG.selectAll('g[data-id]').each(function(){
       const g = d3.select(this);
       const status = g.attr('data-status') || 'normal';
@@ -513,7 +496,6 @@ export function renderGraph(svgEl, ctx) {
       rect.attr('fill', fill).attr('stroke', border).attr('filter', filter || null);
       if (!accent.empty()) accent.attr('fill', stripe);
 
-      // barres Smart/Mod/Evo
       g.selectAll('rect.gbar').each(function(){
         const bar = d3.select(this);
         const included = bar.attr('data-included') === '1';
@@ -525,12 +507,10 @@ export function renderGraph(svgEl, ctx) {
     });
   }
 
-  // observer du thème
   const mo = new MutationObserver(() => queueMicrotask(recolor));
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   recolor();
 
-  // cleanup pour hot-reload / navigation
   return () => {
     try { const tip = document.getElementById('tooltip'); tip && tip.classList.remove('visible'); } catch {}
     mo.disconnect();

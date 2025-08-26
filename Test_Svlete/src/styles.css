@@ -149,3 +149,5 @@ label { display:block; margin: 8px 0 4px; color: var(--c-text-muted); }
   --c-selected-stripe: #8C84FF;
   --c-selected-bg:     #26204F;
 }
+
+.editor-right { padding: 12px; }
