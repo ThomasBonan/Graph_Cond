@@ -1,171 +1,154 @@
 <script>
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { get } from 'svelte/store';
-  import { graphEl } from '../lib/stores.js';
 
-  // Props: passer des VALEURS (pas les stores)
-  export let grouped = {};      // { group: { root:[], subgroups:{ [sg]: string[] } } }
-  export let data = {};         // fallback: { group: [{id, name, ...}] }
-  export let optionLabels = {}; // { id: label }
-  export let value = null;      // bind:value (id)
-  export let placeholder = 'Rechercher une option…';
-  export let clearable = true;
+  export let items = [];      // [{ id, label, path? }]
+  export let value = null;    // id sélectionné (bind:value)
+  export let placeholder = 'Rechercher…';
+  export let disabled = false;
+  export let showPath = false;
 
   const dispatch = createEventDispatcher();
 
-  // état interne
-  let q = '';
+  let root, inputEl, menuEl;
   let open = false;
-  let focused = -1;
-  let rootEl;
+  let q = '';
+  let active = -1;
 
-  // --- construction de la liste (robuste) ---
-  function buildFromGrouped(g) {
-    const items = [];
-    for (const [gName, obj] of Object.entries(g || {})) {
-      const push = (id, sg) => items.push({
-        id,
-        label: optionLabels[id] || id,
-        group: gName,
-        subgroup: sg || null,
-        path: sg ? `${gName} › ${sg}` : `${gName} › __root`
-      });
-      (obj?.root || []).forEach((id) => push(id, null));
-      for (const [sg, ids] of Object.entries(obj?.subgroups || {})) (ids || []).forEach((id) => push(id, sg));
-    }
-    return items;
-  }
-  function buildFromData(d) {
-    const items = [];
-    for (const [gName, arr] of Object.entries(d || {})) {
-      (arr || []).forEach((o) => items.push({
-        id: o.id,
-        label: optionLabels[o.id] || o.name || o.id,
-        group: gName,
-        subgroup: null,
-        path: `${gName}`
-      }));
-    }
-    return items;
+  // filtrage (label + path)
+  $: normQ = q.trim().toLowerCase();
+  $: filtered = (items || [])
+    .map(x => ({ ...x, _score: score(x, normQ) }))
+    .filter(x => x._score > (normQ ? 0 : -Infinity))
+    .sort((a,b)=> b._score - a._score || a.label.localeCompare(b.label) || (a.path||'').localeCompare(b.path||''))
+    .slice(0, 300);
+
+  function score(it, q) {
+    if (!q) return -1;
+    const hay = (it.label + ' ' + (it.path || '')).toLowerCase();
+    const idx = hay.indexOf(q);
+    return idx < 0 ? 0 : 1000 - idx;
   }
 
-  $: allItems = (() => { const A = buildFromGrouped(grouped); return A.length ? A : buildFromData(data); })();
+  function openMenu() { if (!disabled) { open = true; active = 0; } }
+  function closeMenu() { open = false; active = -1; }
 
-  $: byLabelCount = allItems.reduce((m, it) => ((m[it.label] = (m[it.label] || 0) + 1), m), {});
-
-  $: filtered =
-    (q ? q.trim().toLowerCase() : '')
-      ? allItems
-          .map((it) => {
-            const hay = `${it.label} ${it.group} ${it.subgroup || ''}`.toLowerCase();
-            return { ...it, score: hay.includes(q.trim().toLowerCase()) ? 1 : 0 };
-          })
-          .filter((it) => it.score > 0)
-          .sort((a, b) => (a.label === b.label ? a.path.localeCompare(b.path) : a.label.localeCompare(b.label)))
-      : allItems.slice().sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
-
-  // --- sélection / clear ---
-  function choose(it) {
-    value = it?.id ?? null;  // remonte l'ID
-    q     = it ? it.label : '';
-    open  = false;
-    focused = -1;
-    dispatch('change', { id: value, item: it || null });
-  }
-  function clear() {
-    if (!clearable) return;
-    value = null;
+  function select(id) {
+    value = id;                          // met à jour le bind:value côté parent
+    dispatch('change', { value: id });   // au cas où le parent écoute l'event
+    // reset du champ et fermeture du menu
     q = '';
-    dispatch('change', { id: null, item: null });
+    closeMenu();
+    // retire le focus pour éviter la réouverture immédiate
+    setTimeout(() => inputEl?.blur(), 0);
   }
-
-  // sync affichage si le parent change value
-  $: if (!open) {
-    if (value == null) { if (q !== '') q = ''; }
-    else { const it = allItems.find(x => x.id === value); if (it && q !== it.label) q = it.label; }
-  }
-
-  // --- flash dans le graphe ---
-  function flash(id) {
-    const svg = get(graphEl);
-    if (svg && typeof svg.dispatchEvent === 'function') {
-      svg.dispatchEvent(new CustomEvent('flash', { detail: [id] }));
-    }
-  }
-
-  // --- fermeture : click-outside + esc + blur ---
-  function onDocClick(e) {
-    if (!open) return;
-    if (!rootEl?.contains(e.target)) { open = false; focused = -1; }
-  }
-  onMount(() => document.addEventListener('mousedown', onDocClick, true));
-  onDestroy(() => document.removeEventListener('mousedown', onDocClick, true));
 
   function onKey(e) {
-    if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) { open = true; e.preventDefault(); return; }
+    if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) { openMenu(); return; }
     if (!open) return;
-    if (e.key === 'ArrowDown') { focused = Math.min(filtered.length - 1, focused + 1); e.preventDefault(); return; }
-    if (e.key === 'ArrowUp')   { focused = Math.max(0, focused - 1); e.preventDefault(); return; }
-    if (e.key === 'Enter')     { const it = filtered[focused]; if (it) choose(it); e.preventDefault(); return; }
-    if (e.key === 'Escape')    { open = false; focused = -1; e.preventDefault(); return; }
+    if (e.key === 'ArrowDown') { active = Math.min(active + 1, filtered.length - 1); ensureVisible(); }
+    else if (e.key === 'ArrowUp') { active = Math.max(active - 1, 0); ensureVisible(); }
+    else if (e.key === 'Enter') { const it = filtered[active]; if (it) select(it.id); }
+    else if (e.key === 'Escape') { closeMenu(); }
   }
-  function onBlur() {
-    setTimeout(() => {
-      if (!rootEl?.contains(document.activeElement)) { open = false; focused = -1; }
-    }, 100);
+
+  function ensureVisible() {
+    const item = menuEl?.querySelector(`[data-i="${active}"]`);
+    if (item && menuEl) {
+      const r = item.getBoundingClientRect();
+      const R = menuEl.getBoundingClientRect();
+      if (r.top < R.top) menuEl.scrollTop -= (R.top - r.top);
+      if (r.bottom > R.bottom) menuEl.scrollTop += (r.bottom - R.bottom);
+    }
   }
+
+  function onOutside(e) {
+    if (!root) return;
+    if (!root.contains(e.target)) closeMenu();
+  }
+
+  onMount(() => {
+    document.addEventListener('pointerdown', onOutside, true);
+  });
+  onDestroy(() => {
+    document.removeEventListener('pointerdown', onOutside, true);
+  });
 </script>
 
-<style>
-  .picker { position: relative; }
-  .ctrl { display:flex; gap:6px; align-items:center; }
-  .ctrl input { flex:1; width:100%; padding:6px 8px; border:1px solid var(--c-stroke); border-radius:6px; background: var(--c-box-bg); color: var(--c-text); }
-  .btn { cursor:pointer; border:1px solid var(--c-stroke); background: var(--c-box-bg); color: var(--c-text); border-radius:6px; padding:4px 8px; }
-  .panel { position:absolute; left:0; right:0; z-index:20; margin-top:4px; background: var(--c-box-bg); border:1px solid var(--c-stroke); border-radius:8px; max-height: 280px; overflow:auto; box-shadow: 0 12px 24px rgba(0,0,0,.25); }
-  .item { padding:10px 12px; border-bottom:1px solid var(--c-stroke-weak); cursor:pointer; }
-  .item:last-child { border-bottom:none; }
-  .item:hover, .item.focused { background: rgba(37,99,235,.12); }
-  .label { font-weight:600; display:flex; align-items:center; gap:8px; }
-  .path { font-size:12px; color: var(--c-text-muted); margin-top:2px; }
-  .badge { font-size:11px; border:1px solid var(--c-stroke); border-radius:6px; padding:1px 6px; }
-</style>
-
-<div class="picker" bind:this={rootEl} on:keydown={onKey}>
-  <div class="ctrl">
+<div class="op" bind:this={root} data-disabled={disabled ? '1' : '0'}>
+  <div class="control" on:click={() => inputEl?.focus()}>
     <input
+      bind:this={inputEl}
+      type="text"
+      class="input"
       placeholder={placeholder}
       bind:value={q}
-      on:focus={() => (open = true)}
-      on:click={() => (open = true)}
-      on:blur={onBlur}
+      disabled={disabled}
+      on:focus={openMenu}
+      on:keydown={onKey}
+      autocomplete="off"
+      spellcheck="false"
     />
-    {#if clearable}
-      <button class="btn" on:click={clear} title="Effacer">✕</button>
+    {#if value}
+      <button class="clear" title="Effacer" on:click={() => { value = null; dispatch('change', { value: null }); q=''; closeMenu(); inputEl?.focus(); }}>×</button>
     {/if}
+    <span class="caret" aria-hidden>▾</span>
   </div>
 
   {#if open}
-    <div class="panel" role="listbox">
-      {#each filtered as it, i}
-        <div
-          class="item {i === focused ? 'focused' : ''}"
-          role="option"
-          aria-selected={value === it.id}
-          on:mouseenter={() => { focused = i; flash(it.id); }}
-          on:mousedown|preventDefault={() => choose(it)}
-        >
-          <div class="label">
-            <span>{it.label}</span>
-            {#if byLabelCount[it.label] > 1}
-              <span class="badge" title="Nom en doublon">doublon</span>
+    <div class="menu" bind:this={menuEl} role="listbox">
+      {#if filtered.length === 0}
+        <div class="empty">Aucun résultat</div>
+      {:else}
+        {#each filtered as it, i (it.id)}
+          <div
+            class="item"
+            data-i={i}
+            role="option"
+            aria-selected={i === active}
+            class:active={i === active}
+            on:mouseenter={() => active = i}
+            on:mousedown|preventDefault={() => select(it.id)}
+          >
+            <div class="label">{it.label}</div>
+            {#if showPath && it.path}
+              <div class="path">{it.path}</div>
             {/if}
           </div>
-          <div class="path">{it.path}</div>
-        </div>
-      {/each}
-      {#if filtered.length === 0}
-        <div class="item"><em>Aucun résultat</em></div>
+        {/each}
       {/if}
     </div>
   {/if}
 </div>
+
+<style>
+  .op { position: relative; display: block; }
+  .control {
+    position: relative; display: flex; align-items: center;
+    border: 1px solid var(--c-stroke); border-radius: 8px; background: var(--c-box-bg);
+    padding: 6px 28px 6px 10px;
+  }
+  .input {
+    width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--c-text);
+    font: inherit;
+  }
+  .clear {
+    position: absolute; right: 22px; top: 50%; transform: translateY(-50%);
+    border: 0; background: transparent; color: var(--c-text-muted); cursor: pointer; font-size: 16px; line-height: 1;
+  }
+  .caret {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    color: var(--c-text-muted); font-size: 12px;
+  }
+  .menu {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+    border: 1px solid var(--c-stroke); border-radius: 8px; background: var(--c-box-bg);
+    max-height: 280px; overflow: auto; z-index: 40; box-shadow: 0 10px 24px rgba(0,0,0,.12);
+  }
+  .item { padding: 8px 10px; cursor: pointer; }
+  .item.active, .item:hover { background: rgba(0,0,0,.06); }
+  [data-theme="dark"] .item.active, [data-theme="dark"] .item:hover { background: rgba(255,255,255,.08); }
+  .label { font-weight: 600; color: var(--c-text); }
+  .path { font-size: 12px; color: var(--c-text-muted); }
+  .empty { padding: 10px; color: var(--c-text-muted); }
+  .op[data-disabled="1"] .control { opacity: .6; pointer-events: none; }
+</style>
