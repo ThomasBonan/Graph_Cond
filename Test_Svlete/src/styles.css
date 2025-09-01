@@ -170,3 +170,59 @@ svg, svg * {
   -moz-user-select: none;
   user-select: none;
 }
+
+/* ==========================================================
+   >>>>>>>>>  AJOUTS / FIX COMMERCIALE (graphe pleine largeur)
+   ========================================================== */
+
+/* 1) Toujours laisser les enfants prendre la place en flex/grille */
+.layout, .mainpane { min-width: 0; min-height: 0; }
+
+/* 2) Vue commerciale : conteneur 2 colonnes (graphe + résumé)
+      - utilise la classe .combo si elle existe déjà (vue commerciale)
+      - sinon, ces règles n'impactent pas l'éditeur
+*/
+.combo {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 12px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 3) Cellule du graphe (première colonne) */
+.combo .graph-wrap,
+.combo .graphpane,
+.combo .graph-pane {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 4) Neutralise toute largeur/hauteur inline posée sur le wrapper du graphe */
+.graph-wrap,
+.graphpane,
+.graph-pane {
+  width: auto !important;
+  height: auto !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 5) Panneau de résumé à droite (largeur fixe, ne pousse pas le graphe) */
+.summary-panel {
+  width: 360px;
+  flex: 0 0 360px;
+  overflow: auto;
+}
+
+/* 6) Sécurité : dans tout contexte, le wrapper immédiat du SVG ne rogne pas */
+.graph-wrap > *, .graphpane > *, .graph-pane > * {
+  min-width: 0;
+  min-height: 0;
+}

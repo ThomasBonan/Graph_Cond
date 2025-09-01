@@ -1,15 +1,16 @@
 // src/lib/d3/graph.js
-// Graphe D3 : zoom/pan robustes, arêtes "obligatoire", barres Smart/Mod/Evo,
-// coloration incompatible en mode éditeur, et préservation du transform.
+// - Surface identique éditeur/commerciale (le SVG prend la taille visible du conteneur)
+// - Recoloration instantanée quand le thème (data-theme) change
+// - Dépendances k/n, bords "obligatoire", tooltip, etc.
 import * as d3 from 'd3';
 
-const _zoomState = new WeakMap(); // svgEl -> { transform: d3.ZoomTransform|null, userZoomed: boolean }
+const _zoomState = new WeakMap();
 
 const NODE_PAD_X = 10, NODE_PAD_Y = 8, NODE_LINE_H = 14, GAMME_BAR_GAP = 4;
-const GT_PAD_X = 6, GT_PAD_Y = 2, GT_LINE_H = 14, GT_GAP = 6;
-const SGT_PAD_X = 8, SGT_PAD_Y = 4, SGT_LINE_H = 13, SGT_EXTRA_GAP = 6;
+const GT_PAD_X = 6,  GT_PAD_Y = 2,  GT_LINE_H   = 14, GT_GAP        = 6;
+const SGT_PAD_X = 8,  SGT_PAD_Y = 4,  SGT_LINE_H  = 13, SGT_EXTRA_GAP = 6;
 
-/* ---------- helpers pour texte multi-lignes ---------- */
+/* ------------ helpers texte (wrap) ------------ */
 function wrapLabel(textSel, label, baseX, baseY, innerW, {
   align = 'middle', padX = NODE_PAD_X, padY = NODE_PAD_Y, lineH = NODE_LINE_H
 } = {}) {
@@ -69,26 +70,54 @@ function chunkWord(word, maxW, tsp) {
   return out;
 }
 
+/* ------------ dépendances k/n ------------ */
+function normalizedGroups(spec) {
+  const out = [];
+  const groups = Array.isArray(spec?.requires_groups) ? spec.requires_groups : [];
+  for (const g of groups) {
+    const of = Array.isArray(g?.of) ? Array.from(new Set(g.of)) : [];
+    const max = of.length;
+    const min = Math.max(0, Math.min(Number.isFinite(+g?.min) ? +g.min : max, max));
+    out.push({ min, of });
+  }
+  // legacy requires => groupe ALL
+  const legacy = Array.isArray(spec?.requires) ? spec.requires.slice() : [];
+  if (legacy.length && out.length === 0) {
+    out.push({ min: legacy.length, of: Array.from(new Set(legacy)) });
+  }
+  return out;
+}
+function groupSatisfied(g, selected) {
+  const of = g.of || [];
+  const min = Math.max(0, Math.min(Number.isFinite(+g.min) ? +g.min : of.length, of.length));
+  if (min === 0) return true;
+  let count = 0;
+  for (const id of of) if (selected.has(id)) count++;
+  return count >= min;
+}
+function requiresSatisfied(spec, selected) {
+  const allGroups = normalizedGroups(spec);
+  return allGroups.every(g => groupSatisfied(g, selected));
+}
+function groupsMissing(spec, selected) {
+  const allGroups = normalizedGroups(spec);
+  return allGroups.map(g => {
+    const of = g.of || [];
+    const min = Math.max(0, Math.min(Number.isFinite(+g.min) ? +g.min : of.length, of.length));
+    let count = 0; const missing = [];
+    for (const id of of) {
+      if (selected.has(id)) count++; else missing.push(id);
+    }
+    return { min, of, count, missing, ok: count >= min };
+  });
+}
+
 /* ===================================================== */
 export function renderGraph(svgEl, ctx) {
   const svg = d3.select(svgEl);
   svg.selectAll('*').remove();
 
   const st = _zoomState.get(svgEl) || { transform: null, userZoomed: false };
-  const preserveZoom = ctx?.preserveZoom !== false;
-
-  // Empêche la sélection gesture qui bloque drag sur certains navigateurs
-  svg.style('touch-action', 'none');
-
-  const ensureSize = (el) => {
-    if (!el) return [1200, 800];
-    const w = el.clientWidth  || parseInt(el.getAttribute('width'))  || 1200;
-    const h = el.clientHeight || parseInt(el.getAttribute('height')) || 800;
-    d3.select(el).attr('width', w).attr('height', h);
-    return [w, h];
-  };
-  let [vw, vh] = ensureSize(svgEl);
-
   const {
     search = '',
     collapsed = {},
@@ -97,17 +126,40 @@ export function renderGraph(svgEl, ctx) {
     rules = {},
     optionLabels = {},
     selected,
-    interactive = true,      // false en mode éditeur => nœuds non cliquables
+    interactive = true,     // même traitement pour la surface
     onToggleGroup = () => {},
     onToggleSubgroup = () => {},
     onToggleSelect = () => {},
+    preserveZoom = true
   } = ctx;
 
-  // ====== CONSTANTES DE LAYOUT (déclarées UNE fois) ======
+  svg.style('touch-action', 'none');
+  svg.on('dragover.dropzone', (e) => e.preventDefault());
+  svg.on('drop.dropzone',     (e) => e.preventDefault());
+
+  // === clé : taille du SVG = taille VISIBLE (bbox du nœud + fallback parent)
+  const ensureSize = (el) => {
+    let w = 0, h = 0;
+    try {
+      const r = el.getBoundingClientRect();
+      w = Math.floor(r.width);
+      h = Math.floor(r.height);
+    } catch {}
+    if (!w || !h) {
+      const p = el.parentElement;
+      if (p) { w = Math.max(w, p.clientWidth || 0); h = Math.max(h, p.clientHeight || 0); }
+    }
+    if (!w) w = parseInt(el.getAttribute('width'))  || 1200;
+    if (!h) h = parseInt(el.getAttribute('height')) || 800;
+    d3.select(el).attr('width', w).attr('height', h);
+    return [w, h];
+  };
+  let [vw, vh] = ensureSize(svgEl);
+
   const subgroupWidth = 220, optionWidth = 200;
   const padX=30, padY=30, gapX=16, itemGapY=100, groupSpacing=80;
 
-  // Valeur live de la sélection
+  // store selected
   let selectedValue = new Set();
   let unsubscribeSelected = null;
   if (selected && typeof selected.subscribe === 'function') {
@@ -116,47 +168,54 @@ export function renderGraph(svgEl, ctx) {
     selectedValue = selected;
   }
 
-  const isEditor = !interactive; // sert à colorer les incompatibilités sans sélection
   const s = (search || '').toLowerCase();
-  const css = (v, d) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d;
 
-  // Palette (inclut req/inc/mandatory et sélection)
-  let cText = css('--c-text','#0f172a'), cTextMuted = css('--c-text-muted','#8b93a7');
-  let cStroke=css('--c-stroke','#d0d7e2'), cStrokeWeak=css('--c-stroke-weak','#e2e8f0'), cStrokeGroup=css('--c-stroke-group','#cbd5e1');
-  let cBoxBg=css('--c-box-bg','#ffffff');
-  let cReqBg=css('--c-rule-req-bg','#f1f5f9'), cReqBorder=css('--c-rule-req-border','#94a3b8');
-  let cIncBg=css('--c-rule-inc-bg','#fee2e2'), cIncBorder=css('--c-rule-inc-border','#dc2626');
-  let cMandBorder=css('--c-rule-mand-border','#0ea5e9');
-  let cSmart=css('--c-smart','#646363'), cMod=css('--c-mod','#da261b'), cEvo=css('--c-evo','#304e9c');
-  let halo = css('--c-text-halo','transparent'); let haloW = parseFloat(css('--c-text-halo-w','0'))||0;
-  let cSelBg = css('--c-selected-bg', '#f0ecff');
-  let cSelBorder = css('--c-selected-border', '#5a49c8');
+  const cssVar = (v, d) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d;
+  const readPalette = () => ({
+    cText: cssVar('--c-text','#0f172a'),
+    cTextMuted: cssVar('--c-text-muted','#8b93a7'),
+    cStroke: cssVar('--c-stroke','#d0d7e2'),
+    cStrokeWeak: cssVar('--c-stroke-weak','#e2e8f0'),
+    cStrokeGroup: cssVar('--c-stroke-group','#cbd5e1'),
+    cBoxBg: cssVar('--c-box-bg','#ffffff'),
+    cReqBg: cssVar('--c-rule-req-bg','#f1f5f9'),
+    cReqBorder: cssVar('--c-rule-req-border','#94a3b8'),
+    cIncBg: cssVar('--c-rule-inc-bg','#fee2e2'),
+    cIncBorder: cssVar('--c-rule-inc-border','#dc2626'),
+    cMandBorder: cssVar('--c-rule-obl-border','#0ea5e9') || cssVar('--c-rule-mand-border','#0ea5e9'),
+    cSmart: cssVar('--c-smart','#646363'),
+    cMod: cssVar('--c-mod','#da261b'),
+    cEvo: cssVar('--c-evo','#304e9c'),
+    halo: cssVar('--c-text-halo','transparent'),
+    haloW: parseFloat(cssVar('--c-text-halo-w','0'))||0,
+    cSelBg: cssVar('--c-selected-bg', '#f0ecff'),
+    cSelBorder: cssVar('--c-selected-border', '#5a49c8')
+  });
+  let pal = readPalette();
 
-  function readPalette() {
-    cText = css('--c-text','#0f172a'); cTextMuted = css('--c-text-muted','#8b93a7');
-    cStroke=css('--c-stroke','#d0d7e2'); cStrokeWeak=css('--c-stroke-weak','#e2e8f0'); cStrokeGroup=css('--c-stroke-group','#cbd5e1');
-    cBoxBg=css('--c-box-bg','#ffffff');
-    cReqBg=css('--c-rule-req-bg','#f1f5f9'); cReqBorder=css('--c-rule-req-border','#94a3b8');
-    cIncBg=css('--c-rule-inc-bg','#fee2e2'); cIncBorder=css('--c-rule-inc-border','#dc2626');
-    cMandBorder=css('--c-rule-mand-border','#0ea5e9');
-    cSmart=css('--c-smart','#646363'); cMod=css('--c-mod','#da261b'); cEvo=css('--c-evo','#304e9c');
-    halo = css('--c-text-halo','transparent'); haloW = parseFloat(css('--c-text-halo-w','0'))||0;
-    cSelBg = css('--c-selected-bg', '#f0ecff'); cSelBorder = css('--c-selected-border', '#5a49c8');
-  }
-
-  /* ---------- defs + effets ---------- */
+  /* ---------- defs ---------- */
   const defs = svg.append('defs');
-  defs.append('pattern').attr('id','hatch').attr('patternUnits','userSpaceOnUse').attr('width',6).attr('height',6)
-    .append('path').attr('d','M0,0 l6,6').attr('stroke',cTextMuted).attr('stroke-width',1);
+  const hatch = defs.append('pattern').attr('id','hatch').attr('patternUnits','userSpaceOnUse').attr('width',6).attr('height',6);
+  const hatchPath = hatch.append('path').attr('d','M0,0 l6,6').attr('stroke',pal.cTextMuted).attr('stroke-width',1);
   defs.append('style').text(`@keyframes blink {0%{opacity:1}50%{opacity:.25}100%{opacity:1}} .blink{animation:blink .9s ease-in-out 0s 1}`);
-
   const glow = defs.append('filter').attr('id','selglow');
-  glow.append('feDropShadow').attr('dx',0).attr('dy',0).attr('stdDeviation',2.5).attr('flood-color',cSelBorder).attr('flood-opacity',0.6);
+  const glowDrop = glow.append('feDropShadow').attr('dx',0).attr('dy',0).attr('stdDeviation',2.5).attr('flood-color',pal.cSelBorder).attr('flood-opacity',0.6);
 
-  /* ---------- zoom/pan unique et persistant ---------- */
-  const rootG  = svg.append('g').attr('id','zoom-container');
-  const edgesG = rootG.append('g').attr('id','edges-mand');
+  /* ---------- calques ---------- */
+  const rootG   = svg.append('g').attr('id','zoom-container');
 
+  // Rect de capture = TAILLE VIEWPORT
+  const capture = rootG.append('rect')
+    .attr('class','bg-capture')
+    .attr('x', 0).attr('y', 0)
+    .attr('width', vw).attr('height', vh)
+    .attr('fill', 'transparent')
+    .style('pointer-events', 'all');
+
+  const contentG = rootG.append('g').attr('id','content');
+  const edgesG   = contentG.append('g').attr('id','edges-mand');
+
+  /* ---------- zoom/pan ---------- */
   const zoom = d3.zoom()
     .scaleExtent([0.5, 2])
     .on('zoom', (e) => {
@@ -165,29 +224,29 @@ export function renderGraph(svgEl, ctx) {
       st.userZoomed = true;
       _zoomState.set(svgEl, st);
     });
-
-  svg.call(zoom).on('dblclick.zoom', null); // pas de dblclick surprise
-  svg.on('recenter', () => recenter());     // custom event pour recentrer
+  svg.call(zoom).on('dblclick.zoom', null);
+  svg.on('recenter', () => recenter());
 
   /* ---------- légende ---------- */
   const legend = svg.append('g').attr('transform','translate(16,16)');
-  [
-    {key:'req', label:'Bloqué par dépendance', fill:cReqBg,  border:cReqBorder,  stripe:cReqBorder},
-    {key:'inc', label:'Incompatible',          fill:cIncBg,  border:cIncBorder,  stripe:cIncBorder},
-    {key:'man', label:'Obligatoire',           fill:'none',  border:cMandBorder, stripe:cMandBorder},
-    {key:'opt', label:'Optionnelle (gamme)',   fill:'url(#hatch)', border:cStroke, stripe:cStroke}
-  ].forEach((it,i)=>{
+  const legendItems = [
+    {key:'req', label:'Bloqué par dépendance',  boxFill:()=>pal.cReqBg,  boxStroke:()=>pal.cReqBorder, stripe:()=>pal.cReqBorder},
+    {key:'inc', label:'Incompatible',           boxFill:()=>pal.cIncBg,  boxStroke:()=>pal.cIncBorder, stripe:()=>pal.cIncBorder},
+    {key:'man', label:'Obligatoire',            boxFill:()=>'none',      boxStroke:()=>pal.cMandBorder, stripe:()=>pal.cMandBorder},
+    {key:'opt', label:'Optionnelle (gamme)',    boxFill:()=>'url(#hatch)', boxStroke:()=>pal.cStroke,   stripe:()=>pal.cStroke}
+  ];
+  legendItems.forEach((it,i)=>{
     const y = i*22;
-    legend.append('rect').attr('class',`legend-stripe ${it.key}`).attr('x',0).attr('y',y).attr('width',4).attr('height',14).attr('fill',it.stripe);
+    legend.append('rect').attr('class',`legend-stripe ${it.key}`).attr('x',0).attr('y',y).attr('width',4).attr('height',14).attr('fill',it.stripe());
     legend.append('rect').attr('class',`legend-box ${it.key}`).attr('x',4).attr('y',y).attr('width',18).attr('height',14)
-      .attr('fill',it.fill).attr('stroke',it.border).attr('rx',2).attr('ry',2);
-    legend.append('text').attr('class','legend-label').attr('x',26).attr('y',y+11).attr('fill',cText).attr('font-size',12)
-      .style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW).text(it.label);
+      .attr('fill',it.boxFill()).attr('stroke',it.boxStroke()).attr('rx',2).attr('ry',2);
+    legend.append('text').attr('class','legend-label').attr('x',26).attr('y',y+11).attr('fill',pal.cText).attr('font-size',12)
+      .style('paint-order','stroke fill').attr('stroke',pal.halo).attr('stroke-width',pal.haloW).text(it.label);
   });
 
   /* ---------- flash + tooltip ---------- */
-  const nodeMap = new Map(); // id -> selection d3
-  const nodePos = new Map(); // id -> {cx, cy}
+  const nodeMap = new Map();
+  const nodePos = new Map();
   svg.on('flash', (event) => {
     const ids = event?.detail || [];
     ids.forEach((id) => {
@@ -201,11 +260,11 @@ export function renderGraph(svgEl, ctx) {
   });
 
   let tipEl = document.getElementById('tooltip');
-  if (!tipEl) { tipEl = document.createElement('div'); tipEl.id='tooltip'; tipEl.setAttribute('aria-hidden','true'); document.body.appendChild(tipEl); }
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.id='tooltip'; tipEl.setAttribute('aria-hidden','true'); tipEl.style.position='fixed'; tipEl.style.pointerEvents='none'; document.body.appendChild(tipEl); }
   const showTip = (lines,x,y)=>{ tipEl.replaceChildren(...lines.map(t=>{const p=document.createElement('div');p.textContent=t;return p;})); tipEl.style.left=x+'px'; tipEl.style.top=y+'px'; tipEl.classList.add('visible'); tipEl.setAttribute('aria-hidden','false'); };
   const hideTip = ()=>{ tipEl.classList.remove('visible'); tipEl.setAttribute('aria-hidden','true'); };
 
-  /* ======================= DESSIN GROUPES / NŒUDS ======================= */
+  /* ======================= DESSIN ======================= */
   const gxStart = 50;
   let gx=gxStart, drawn=0;
 
@@ -233,19 +292,19 @@ export function renderGraph(svgEl, ctx) {
       const groupHeight = 2 * padY;
       const groupY = 60;
 
-      rootG.append('rect')
+      contentG.append('rect')
         .attr('class','group-box')
         .attr('x',gx).attr('y',groupY)
         .attr('width',groupWidth).attr('height',groupHeight)
-        .attr('fill','none').attr('stroke',cStrokeGroup)
+        .attr('fill','none').attr('stroke',pal.cStrokeGroup)
         .attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
-      const gTitle = rootG.append('text')
+      const gTitle = contentG.append('text')
         .attr('class','group-title')
         .attr('font-size',16).attr('font-weight','bold')
         .style('cursor','pointer').style('paint-order','stroke fill')
-        .attr('stroke',halo).attr('stroke-width',haloW)
-        .attr('fill', cText)
+        .attr('stroke',pal.halo).attr('stroke-width',pal.haloW)
+        .attr('fill', pal.cText)
         .on('click',()=> onToggleGroup(groupName));
 
       const gTitleInnerW = groupWidth - GT_PAD_X * 2;
@@ -274,16 +333,16 @@ export function renderGraph(svgEl, ctx) {
     const groupHeight = innerHeight + 2 * padY;
     const groupY = 60;
 
-    rootG.append('rect').attr('class','group-box')
+    contentG.append('rect').attr('class','group-box')
       .attr('x',gx).attr('y',groupY).attr('width',groupWidth).attr('height',groupHeight)
-      .attr('fill','none').attr('stroke',cStrokeGroup).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
+      .attr('fill','none').attr('stroke',pal.cStrokeGroup).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
-    const gTitle = rootG.append('text')
+    const gTitle = contentG.append('text')
       .attr('class','group-title')
       .attr('font-size',16).attr('font-weight','bold')
       .style('cursor','pointer').style('paint-order','stroke fill')
-      .attr('stroke',halo).attr('stroke-width',haloW)
-      .attr('fill', cText)
+      .attr('stroke',pal.halo).attr('stroke-width',pal.haloW)
+      .attr('fill', pal.cText)
       .on('click',()=> onToggleGroup(groupName));
     const gTitleInnerW = groupWidth - GT_PAD_X * 2;
     const gTitleH = wrapLabel(gTitle, groupName, gx, groupY, gTitleInnerW, {
@@ -293,18 +352,18 @@ export function renderGraph(svgEl, ctx) {
 
     positions.forEach(({ sg, key, ids, x, y, boxH, height, collapsed: isCollapsed }) => {
       const sx=x, sy=groupY+y, h=isCollapsed?40:(boxH ?? height);
-      const subRect = rootG.append('rect').attr('class','subgroup-box')
+      contentG.append('rect').attr('class','subgroup-box')
         .attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
-        .attr('fill','none').attr('stroke',cStrokeWeak).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
+        .attr('fill','none').attr('stroke',pal.cStrokeWeak).attr('stroke-dasharray','4,2').attr('rx',6).attr('ry',6);
 
       let headerH = 0;
       if (sg !== '__root') {
-        const sgTitle = rootG.append('text')
+        const sgTitle = contentG.append('text')
           .attr('class','subgroup-title')
           .attr('font-size',13).attr('font-weight','bold')
           .style('cursor','pointer').style('paint-order','stroke fill')
-          .attr('stroke',halo).attr('stroke-width',haloW)
-          .attr('fill', cText);
+          .attr('stroke',pal.halo).attr('stroke-width',pal.haloW)
+          .attr('fill', pal.cText);
 
         const sgtInnerW = subgroupWidth - SGT_PAD_X * 2;
         const sgtH = wrapLabel(sgTitle, sg, sx, sy, sgtInnerW, {
@@ -325,39 +384,39 @@ export function renderGraph(svgEl, ctx) {
         const yOpt = sy + headerH + i*itemGapY;
         const xOpt = sx + (subgroupWidth - optionWidth)/2;
 
-        const reqs = (rules[id]?.requires) || [];
-        const mans = (rules[id]?.mandatory) || [];
-        const unmet = reqs.filter(dep => !selectedValue.has(dep));
-        const blocked = unmet.length > 0;
+        const spec = rules[id] || {};
+        const mans = spec.mandatory || [];
 
-        // Incompatibilité avec la sélection courante (mode normal)
+        // blocage via k/n
+        const depsOk = requiresSatisfied(spec, selectedValue);
+        const missingGroups = groupsMissing(spec, selectedValue).filter(g => !g.ok);
+        const blocked = !depsOk;
+
+        // incompatibilités
         const incompatibleWithSel = Array.from(selectedValue).some(s =>
-          (rules[id]?.incompatible_with || []).includes(s) ||
+          (spec?.incompatible_with || []).includes(s) ||
           (rules[s]?.incompatible_with || []).includes(id)
         );
-
-        // Incompatibilité "globale" (existe au moins une incompatibilité impliquant ce nœud)
-        const incompatibleAny =
-          ((rules[id]?.incompatible_with || []).length > 0) ||
-          Object.values(rules).some(r => (r?.incompatible_with || []).includes(id));
+        const incompatibleAny = ((spec?.incompatible_with || []).length > 0) ||
+                                Object.values(rules).some(r => (r?.incompatible_with || []).includes(id));
 
         const isSel = selectedValue?.has?.(id);
         const canClick = interactive && !blocked && !incompatibleWithSel;
 
         let status = 'normal';
         if (blocked) status = 'blocked';
-        else if (isEditor ? incompatibleAny : incompatibleWithSel) status = 'incompatible';
+        else if (incompatibleAny && !canClick) status = 'incompatible';
         if (isSel && status === 'normal') status = 'selected';
 
-        let boxFill = cBoxBg, boxStroke = cStroke, filterSel = null;
-        if (status === 'blocked') { boxFill=cReqBg; boxStroke=cReqBorder; }
-        else if (status === 'incompatible') { boxFill=cIncBg; boxStroke=cIncBorder; }
-        else if (status === 'selected') { boxFill=cSelBg; boxStroke=cSelBorder; filterSel='url(#selglow)'; }
+        let boxFill = pal.cBoxBg, boxStroke = pal.cStroke, filterSel = null;
+        if (status === 'blocked') { boxFill=pal.cReqBg; boxStroke=pal.cReqBorder; }
+        else if (status === 'incompatible') { boxFill=pal.cIncBg; boxStroke=pal.cIncBorder; }
+        else if (status === 'selected') { boxFill=pal.cSelBg; boxStroke=pal.cSelBorder; filterSel='url(#selglow)'; }
 
         const strokeW = isSel ? 3.0 : 1.0;
         const faded = isSel ? 1 : (s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1);
 
-        const g = rootG.append('g').attr('data-id', id).attr('data-status', status);
+        const g = contentG.append('g').attr('data-id', id).attr('data-status', status);
         nodeMap.set(id, g);
 
         const cursor = canClick ? 'pointer' : ((blocked || incompatibleWithSel) ? 'not-allowed' : 'default');
@@ -374,34 +433,49 @@ export function renderGraph(svgEl, ctx) {
           .on('click', () => { if (canClick) onToggleSelect(id); })
           .on('mousemove', (e)=>{
             const lines = [];
+            if (mans.length) lines.push(`Obligatoire: ${mans.map(r=>optionLabels[r]||r).join(', ')}`);
+
+            const ng = normalizedGroups(spec);
+            if (ng.length) {
+              lines.push('Dépendances :');
+              ng.forEach((g, idx) => {
+                const ms = missingGroups.find(x => x.of.join('|') === g.of.join('|') && x.min === Math.max(0, Math.min(Number.isFinite(+g.min)?+g.min:g.of.length, g.of.length)));
+                const countSel = (g.of || []).filter(x => selectedValue.has(x)).length;
+                const lhs = (g.min === (g.of||[]).length) ? 'Tous' : (g.min === 1 ? '≥1' : `≥${g.min}`);
+                const base = `• ${lhs} parmi (${(g.of||[]).map(x=>optionLabels[x]||x).join(', ')}) — ${countSel}/${(g.of||[]).length}`;
+                if (ms && !ms.ok) lines.push(base + ` — manquants : ${(ms.missing||[]).map(x=>optionLabels[x]||x).join(', ')}`);
+                else lines.push(base + ' — ok');
+              });
+            }
+
+            const incompatibleWith = Array.from(selectedValue).filter(s =>
+              (spec?.incompatible_with || []).includes(s) ||
+              (rules[s]?.incompatible_with || []).includes(id)
+            );
+            if (incompatibleWith.length) lines.push(`Incompatible avec: ${incompatibleWith.map(x=>optionLabels[x]||x).join(', ')}`);
+
             const sLine = (gName, map) => {
               const st = (map?.[id]) || { included:false, optional:false };
               return `${gName}: ${st.included ? 'Présent' : (st.optional ? 'Optionnel' : 'Absent')}`;
             };
-            if (mans.length) lines.push(`Obligatoire: ${mans.map(r=>optionLabels[r]||r).join(', ')}`);
-            if (blocked && unmet.length) lines.push(`Manque: ${unmet.map(r=>optionLabels[r]||r).join(', ')}`);
-            const incompatibleWith = Array.from(selectedValue).filter(s =>
-              (rules[id]?.incompatible_with || []).includes(s) ||
-              (rules[s]?.incompatible_with || []).includes(id)
-            );
-            if (incompatibleWith.length) lines.push(`Incompatible avec: ${incompatibleWith.map(x=>optionLabels[x]||x).join(', ')}`);
             lines.push(sLine('Smart', gammes.Smart));
             lines.push(sLine('Mod',   gammes.Mod));
             lines.push(sLine('Evo',   gammes.Evo));
+
             const { clientX, clientY } = e;
             showTip(lines, Math.min(clientX, window.innerWidth-10), Math.min(clientY, window.innerHeight-10));
           })
           .on('mouseleave', ()=> hideTip());
 
         if (canClick && !isSel) {
-          rect.on('mouseenter', function(){ d3.select(this).attr('stroke-width', 2).attr('stroke', cSelBorder); })
+          rect.on('mouseenter', function(){ d3.select(this).attr('stroke-width', 2).attr('stroke', pal.cSelBorder); })
               .on('mouseleave', function(){ d3.select(this).attr('stroke-width', strokeW).attr('stroke', boxStroke); });
         }
 
         const txt = g.append('text')
           .attr('class','node-label')
-          .attr('font-size','14px').attr('fill',cText)
-          .style('paint-order','stroke fill').attr('stroke',halo).attr('stroke-width',haloW)
+          .attr('font-size','14px').attr('fill',pal.cText)
+          .style('paint-order','stroke fill').attr('stroke',pal.halo).attr('stroke-width',pal.haloW)
           .style('font-weight', s && label.toLowerCase().includes(s) ? '700' : '500')
           .style('opacity',faded).style('pointer-events','none');
 
@@ -413,17 +487,17 @@ export function renderGraph(svgEl, ctx) {
         const rectH = Math.max(32, labelBlockH);
         rect.attr('height', rectH);
 
-        // --- Barres Smart / Mod / Evo (présent/optionnel/absent)
+        // Barres Smart/Mod/Evo
         const caseW = optionWidth/3;
         const yPos  = yOpt + rectH + GAMME_BAR_GAP;
-        [{key:'Smart', color:cSmart}, {key:'Mod', color:cMod}, {key:'Evo', color:cEvo}].forEach((c, idx) => {
+        [{key:'Smart', color:pal.cSmart}, {key:'Mod', color:pal.cMod}, {key:'Evo', color:pal.cEvo}].forEach((c, idx) => {
           const st = (gammes?.[c.key] || {})[id] || { included:false, optional:false };
-          g.append('rect')
+          const bar = g.append('rect')
             .attr('class','gbar')
             .attr('data-key', c.key)
             .attr('data-included', st.included ? '1' : '0')
             .attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
-            .attr('fill', st.included ? c.color : cBoxBg).attr('stroke', cStroke)
+            .attr('fill', st.included ? c.color : pal.cBoxBg).attr('stroke', pal.cStroke)
             .style('opacity', 1).style('pointer-events','none');
           if (st.optional) {
             g.append('rect')
@@ -432,7 +506,6 @@ export function renderGraph(svgEl, ctx) {
           }
         });
 
-        // centre du nœud pour les arêtes "obligatoire"
         nodePos.set(id, { cx: xOpt + optionWidth/2, cy: yOpt + rectH/2 });
       });
     });
@@ -440,7 +513,7 @@ export function renderGraph(svgEl, ctx) {
     gx += groupWidth + groupSpacing;
   }
 
-  /* ======================= ARÊTES OBLIGATOIRES (après tous les nœuds) ======================= */
+  /* ---------- arêtes obligatoires ---------- */
   for (const [fromId, spec] of Object.entries(rules || {})) {
     const list = spec?.mandatory || [];
     const from = nodePos.get(fromId);
@@ -454,84 +527,110 @@ export function renderGraph(svgEl, ctx) {
         .attr('class','mand-edge')
         .attr('d', d)
         .attr('fill','none')
-        .attr('stroke', cMandBorder)
+        .attr('stroke', pal.cMandBorder)
         .attr('stroke-width', 1.6)
         .attr('opacity', 0.9)
         .attr('pointer-events','none');
     }
   }
 
-  /* ======================= ZOOM: préservation / recentrage initial ======================= */
+  /* ---------- recadrage sur le CONTENU (mêmes 2 vues) ---------- */
   function recenter(){
     [vw, vh] = ensureSize(svgEl);
-    zoom.extent([[0,0],[vw, vh]]);
-    const node = rootG.node();
+    // adapter le rect de capture au viewport actuel
+    capture.attr('width', vw).attr('height', vh);
+
+    const node = contentG.node();
     if (!node || typeof node.getBBox !== 'function') return;
     let bbox; try { bbox = node.getBBox(); } catch { return; }
-    if (!bbox || !isFinite(bbox.width) || !isFinite(bbox.height)) return;
+    if (!bbox || !isFinite(bbox.width) || !isFinite(bbox.height) || bbox.width === 0 || bbox.height === 0) return;
 
-    const scale = Math.min(vh/(bbox.height+120), vw/(bbox.width+120), 1);
+    const margin = 120;
+    const scale = Math.min(vh/(bbox.height+margin), vw/(bbox.width+margin), 1);
     const tx = (vw - bbox.width * scale)/2 - bbox.x * scale;
     const ty = (vh - bbox.height * scale)/2 - bbox.y * scale;
     const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
 
-    svg.transition().duration(450).call(zoom.transform, t);
+    svg.transition().duration(400).call(zoom.transform, t);
     st.transform = t; st.userZoomed = false; _zoomState.set(svgEl, st);
   }
 
+  /* ---------- repaint quand le thème change ---------- */
+  function repaintTheme() {
+    pal = readPalette();
+
+    // defs
+    hatchPath.attr('stroke', pal.cTextMuted);
+    glowDrop.attr('flood-color', pal.cSelBorder);
+
+    // légende
+    legend.selectAll('.legend-label')
+      .attr('fill', pal.cText)
+      .attr('stroke', pal.halo)
+      .attr('stroke-width', pal.haloW);
+    legend.selectAll('.legend-box.req').attr('fill', pal.cReqBg).attr('stroke', pal.cReqBorder);
+    legend.selectAll('.legend-stripe.req').attr('fill', pal.cReqBorder);
+    legend.selectAll('.legend-box.inc').attr('fill', pal.cIncBg).attr('stroke', pal.cIncBorder);
+    legend.selectAll('.legend-stripe.inc').attr('fill', pal.cIncBorder);
+    legend.selectAll('.legend-box.man').attr('fill', 'none').attr('stroke', pal.cMandBorder);
+    legend.selectAll('.legend-stripe.man').attr('fill', pal.cMandBorder);
+    legend.selectAll('.legend-box.opt').attr('fill', 'url(#hatch)').attr('stroke', pal.cStroke);
+    legend.selectAll('.legend-stripe.opt').attr('fill', pal.cStroke);
+
+    // cadres
+    svg.selectAll('.group-box').attr('stroke', pal.cStrokeGroup);
+    svg.selectAll('.subgroup-box').attr('stroke', pal.cStrokeWeak);
+
+    // nœuds (fond/trait selon status)
+    const fillFor = (st) => st==='blocked' ? pal.cReqBg
+                        : st==='incompatible' ? pal.cIncBg
+                        : st==='selected' ? pal.cSelBg
+                        : pal.cBoxBg;
+    const strokeFor = (st) => st==='blocked' ? pal.cReqBorder
+                          : st==='incompatible' ? pal.cIncBorder
+                          : st==='selected' ? pal.cSelBorder
+                          : pal.cStroke;
+
+    svg.selectAll('.node-bg').each(function(){
+      const stAttr = this.parentNode?.getAttribute?.('data-status') || 'normal';
+      d3.select(this).attr('fill', fillFor(stAttr)).attr('stroke', strokeFor(stAttr));
+    });
+
+    // labels
+    svg.selectAll('.node-label')
+      .attr('fill', pal.cText)
+      .attr('stroke', pal.halo)
+      .attr('stroke-width', pal.haloW);
+
+    // barres gammes (cases non-incluses doivent prendre cBoxBg/cStroke du thème)
+    svg.selectAll('.gbar[data-included="0"]')
+      .attr('fill', pal.cBoxBg)
+      .attr('stroke', pal.cStroke);
+
+    // arêtes obligatoires
+    svg.selectAll('.mand-edge').attr('stroke', pal.cMandBorder);
+  }
+
+  // Observer les mutations de thème (data-theme sur <html> ou <body>)
+  const themeObserver = new MutationObserver(() => repaintTheme());
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  themeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-theme'] });
+
+  // Repaint initial (au cas où le thème courant ≠ clair)
+  repaintTheme();
+
+  /* ---------- rendu final / cleanup ---------- */
   if (drawn === 0) {
-    svg.append('text').attr('x',32).attr('y',96).attr('fill',cTextMuted).attr('font-size',14)
+    svg.append('text').attr('x',32).attr('y',96).attr('fill',pal.cTextMuted).attr('font-size',14)
       .text('Aucune option à afficher. Ajoutez une option dans un groupe ou un sous-groupe.');
   } else {
     if (preserveZoom && st.transform) { svg.call(zoom.transform, st.transform); }
     else { setTimeout(recenter, 0); }
   }
 
-  /* ======================= recoloration lors du changement de thème ======================= */
-  function recolor() {
-    readPalette();
-    svg.select('pattern#hatch path').attr('stroke', cTextMuted);
-    svg.select('filter#selglow feDropShadow').attr('flood-color', cSelBorder);
-
-    legend.selectAll('text.legend-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
-    legend.select('.legend-stripe.req').attr('fill', cReqBorder);
-    legend.select('.legend-stripe.inc').attr('fill', cIncBorder);
-    legend.select('.legend-stripe.man').attr('fill', cMandBorder);
-    legend.select('.legend-stripe.opt').attr('fill', cStroke);
-    legend.select('.legend-box.req').attr('fill', cReqBg).attr('stroke', cReqBorder);
-    legend.select('.legend-box.inc').attr('fill', cIncBg).attr('stroke', cIncBorder);
-    legend.select('.legend-box.man').attr('fill', 'none').attr('stroke', cMandBorder);
-    legend.select('.legend-box.opt').attr('fill', 'url(#hatch)').attr('stroke', cStroke);
-
-    rootG.selectAll('rect.group-box').attr('stroke', cStrokeGroup);
-    rootG.selectAll('rect.subgroup-box').attr('stroke', cStrokeWeak);
-    rootG.selectAll('text.group-title, text.subgroup-title').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
-    rootG.selectAll('text.node-label').attr('fill', cText).attr('stroke', halo).attr('stroke-width', haloW);
-
-    // recolor des barres de gamme
-    rootG.selectAll('g[data-id]').each(function(){
-      const g = d3.select(this);
-      g.selectAll('rect.gbar').each(function(){
-        const bar = d3.select(this);
-        const included = bar.attr('data-included') === '1';
-        const key = bar.attr('data-key');
-        let color = cBoxBg;
-        if (included) color = key === 'Smart' ? cSmart : key === 'Mod' ? cMod : cEvo;
-        bar.attr('fill', color).attr('stroke', cStroke);
-      });
-    });
-
-    edgesG.selectAll('path.mand-edge').attr('stroke', cMandBorder);
-  }
-
-  const mo = new MutationObserver(() => queueMicrotask(recolor));
-  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  recolor();
-
-  /* ======================= cleanup ======================= */
   return () => {
     try { const tip = document.getElementById('tooltip'); tip && tip.classList.remove('visible'); } catch {}
-    mo.disconnect();
+    themeObserver.disconnect();
     svg.selectAll('*').remove();
     if (unsubscribeSelected) unsubscribeSelected();
   };
