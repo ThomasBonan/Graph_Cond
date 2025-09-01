@@ -13,14 +13,12 @@ export const theme = writable(initialTheme);
 
 function applyTheme(t) {
   if (typeof document !== 'undefined') {
-    // Utilise un data-attribute; adapte si tu préfères une classe CSS
     document.documentElement.setAttribute('data-theme', t);
   }
   if (typeof localStorage !== 'undefined') {
     try { localStorage.setItem('theme', t); } catch {}
   }
 }
-// appliquer au démarrage + à chaque changement
 applyTheme(initialTheme);
 theme.subscribe(applyTheme);
 
@@ -41,20 +39,31 @@ export const collapsed = writable({});      // { [group]: { __group?:bool, [sg|_
 /* =========================================
  * Domain state
  * ======================================= */
-export const data = writable({});           // { group: [{ id, name, gammes:{Smart|Mod|Evo:'included'|'optional'|'absent'} }] }
-export const grouped = writable({});        // { group: { root: string[], subgroups: { [sg]: string[] } } }
-export const gammes = writable({            // { Smart|Mod|Evo: { [id]: { included:boolean, optional:boolean } } }
+export const data = writable({});
+export const grouped = writable({});
+export const gammes = writable({
   Smart: {},
   Mod:   {},
   Evo:   {}
 });
-export const optionLabels = writable({});   // { id: label }
-export const rulesets = writable({          // { rulesetName: { rules: { fromId: { requires:[], incompatible_with:[] } } } }
+export const optionLabels = writable({});
+export const rulesets = writable({
+  // Nouveau schéma: { rules: { fromId: { requires:[], incompatible_with:[], mandatory:[] } } }
   default: { rules: {} }
 });
 export const currentRulesetName = writable('default');
 export const selected = writable(new Set());
 
+/* ------------ Helpers internes ----------- */
+function normalizeArr(a) {
+  return Array.isArray(a) ? a.filter(x => typeof x === 'string') : [];
+}
+
+/* =========================================
+ * Normalisation Rulesets
+ *  - ajoute 'mandatory' (aussi 'obligatoire' accepté)
+ *  - rétro-compat ancien format { target: "requires"|"incompatible"|... }
+ * ======================================= */
 function normalizeRuleSets(raw) {
   const out = {};
   const source = raw || { default: { rules: {} } };
@@ -64,25 +73,26 @@ function normalizeRuleSets(raw) {
     const norm = {};
 
     for (const [fromId, spec] of Object.entries(rules)) {
-      // Nouveau format déjà normalisé ?
-      if (spec && (Array.isArray(spec.requires) || Array.isArray(spec.incompatible_with))) {
+      // Nouveau format ?
+      if (spec && (Array.isArray(spec.requires) || Array.isArray(spec.incompatible_with) || Array.isArray(spec.mandatory) || Array.isArray(spec.obligatoire))) {
         norm[fromId] = {
-          requires: Array.isArray(spec.requires) ? spec.requires.slice() : [],
-          incompatible_with: Array.isArray(spec.incompatible_with) ? spec.incompatible_with.slice() : []
+          requires: normalizeArr(spec.requires),
+          incompatible_with: normalizeArr(spec.incompatible_with),
+          mandatory: normalizeArr(spec.mandatory || spec.obligatoire)
         };
         continue;
       }
 
-      // Ancien format : { targetId: "requires" | "incompatible" }
+      // Ancien format : { targetId: "requires" | "incompatible" | "mandatory" | "obligatoire" }
       if (spec && typeof spec === 'object') {
-        const req = [];
-        const inc = [];
+        const req = [], inc = [], man = [];
         for (const [targetId, type] of Object.entries(spec)) {
           const t = String(type || '').toLowerCase();
           if (t.startsWith('req')) req.push(targetId);
-          else inc.push(targetId);
+          else if (t.startsWith('inc')) inc.push(targetId);
+          else if (t.startsWith('man') || t.startsWith('obli')) man.push(targetId);
         }
-        norm[fromId] = { requires: req, incompatible_with: inc };
+        norm[fromId] = { requires: req, incompatible_with: inc, mandatory: man };
       }
     }
 
@@ -93,15 +103,14 @@ function normalizeRuleSets(raw) {
 }
 
 /* =========================================
- * Import (JSON recommandé / ancien .js)
- *  - support groupedSubgroups {subgroups, __root}
- *  - rétro-compat groupedCriteria (plat)
+ * Import JSON (identique, mais rulesets normalisés
+ * pour inclure 'mandatory')
  * ======================================= */
 export async function importJSON(file) {
   const text = await file.text();
   const raw = (text || '').trim();
 
-  // -------- Parse (JSON ou ancien .js exporté) --------
+  // Parse (JSON ou ancien .js exporté)
   let obj = null;
   if (raw.startsWith('{') || raw.startsWith('[')) {
     obj = JSON.parse(raw);
@@ -118,7 +127,7 @@ export async function importJSON(file) {
 
   const g = obj?.gammes || { Smart:{}, Mod:{}, Evo:{} };
 
-  // -------- Hiérarchie (support __root + rétro-compat plat) --------
+  // Hiérarchie
   let hier = {};
   if (obj?.groupedSubgroups && Object.keys(obj.groupedSubgroups).length) {
     for (const [grp, val] of Object.entries(obj.groupedSubgroups)) {
@@ -139,7 +148,7 @@ export async function importJSON(file) {
     hier = { 'Options importées': { root: all, subgroups: {} } };
   }
 
-  // -------- Labels --------
+  // Labels
   const labels = (obj?.optionLabels && Object.keys(obj.optionLabels).length)
     ? obj.optionLabels
     : (() => {
@@ -151,7 +160,7 @@ export async function importJSON(file) {
         return Object.fromEntries(Array.from(set).map(id => [id, id]));
       })();
 
-  // -------- data (flat) à partir de la hiérarchie + gammes --------
+  // data (à partir hiérarchie + gammes)
   data.set(Object.fromEntries(Object.entries(hier).map(([group, objG]) => {
     const set = new Set([...(objG.root || [])]);
     Object.values(objG.subgroups || {}).forEach(ids => (ids || []).forEach(id => set.add(id)));
@@ -171,13 +180,11 @@ export async function importJSON(file) {
   optionLabels.set(labels);
   gammes.set(g);
 
-  // -------- Rulesets: normalisation + choix du ruleset actif --------
+  // Rulesets + choix actif
   const normalized = normalizeRuleSets(obj?.ruleSets);
 
-  // Heuristique de sélection si pas d’"actif" fourni :
-  //  - on prend celui avec le plus de paires (from->(requires+incompatible))
   const countRules = (rs) => Object.values(rs?.rules || {})
-    .reduce((n, r) => n + (r?.requires?.length || 0) + (r?.incompatible_with?.length || 0), 0);
+    .reduce((n, r) => n + (r?.requires?.length || 0) + (r?.incompatible_with?.length || 0) + (r?.mandatory?.length || 0), 0);
 
   const keys = Object.keys(normalized);
   const bestByCount = keys.reduce((best, k) => {
@@ -196,29 +203,25 @@ export async function importJSON(file) {
   rulesets.set(normalized);
   currentRulesetName.set(chosen);
 
-  // -------- Reset sélection --------
+  // Reset sélection
   selected.set(new Set());
 }
 
 /* =========================================
- * Export (payload)
- *  - groupedSubgroups {subgroups, __root}
- *  - groupedCriteria (plat, rétro-compat)
+ * Export (payload) — inclut maintenant 'mandatory'
  * ======================================= */
 export function buildPayload() {
   const G = get(gammes);
   const D = get(data);
   const H = get(grouped);
   const R = get(rulesets);
-  const active = get(currentRulesetName); 
+  const active = get(currentRulesetName);
 
-  // Labels ID -> nom
   const labels = {};
   for (const [group, arr] of Object.entries(D)) {
     (arr || []).forEach((o) => (labels[o.id] = o.name));
   }
 
-  // groupedSubgroups avec __root
   const groupedSubgroups = {};
   for (const [group, obj] of Object.entries(H || {})) {
     const out = { subgroups: {} };
@@ -229,7 +232,6 @@ export function buildPayload() {
     groupedSubgroups[group] = out;
   }
 
-  // groupedCriteria plat (union root + SG) — rétro-compat
   const groupedCriteria = Object.fromEntries(
     Object.entries(groupedSubgroups).map(([gname, o]) => {
       const set = new Set(o.__root || []);
@@ -238,20 +240,32 @@ export function buildPayload() {
     })
   );
 
+  // >>> IMPORTANT: rules (avec mandatory)
+  const rulesExport = {};
+  for (const [rsName, payload] of Object.entries(R || {})) {
+    const rs = payload?.rules || {};
+    const out = {};
+    for (const [from, spec] of Object.entries(rs)) {
+      out[from] = {
+        requires: Array.isArray(spec?.requires) ? spec.requires.slice() : [],
+        incompatible_with: Array.isArray(spec?.incompatible_with) ? spec.incompatible_with.slice() : [],
+        mandatory: Array.isArray(spec?.mandatory) ? spec.mandatory.slice() : []
+      };
+    }
+    rulesExport[rsName] = { rules: out };
+  }
+
   return {
     gammes: G,
     groupedCriteria,
     groupedSubgroups,
     optionLabels: labels,
     criteria: Array.from(new Set(Object.values(groupedCriteria).flat())),
-    ruleSets: R,
+    ruleSets: rulesExport,
     activeRuleset: active
   };
 }
 
-/* =========================================
- * Export helpers
- * ======================================= */
 export function downloadJSON(filename = 'commercial.json') {
   const payload = buildPayload();
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -262,23 +276,78 @@ export function downloadJSON(filename = 'commercial.json') {
   a.click();
   URL.revokeObjectURL(url);
 }
-
-// Alias pour rétro-compat (anciens imports)
 export function exportJSON(filename = 'commercial.json') {
   return downloadJSON(filename);
 }
 
 /* =========================================
- * Réinitialisation complète (bouton "Réinitialiser")
+ * Sélection + auto-ajout obligatoire
+ * ======================================= */
+function getActiveRules() {
+  const rsAll = get(rulesets);
+  const name = get(currentRulesetName);
+  return rsAll?.[name]?.rules || {};
+}
+
+function mandatoryClosure(startId, rules) {
+  // BFS sur edges "mandatory": from -> [mandatory...]
+  const out = new Set();
+  const q = [startId];
+  while (q.length) {
+    const cur = q.shift();
+    const mand = rules?.[cur]?.mandatory || [];
+    for (const a of mand) {
+      if (!out.has(a)) {
+        out.add(a);
+        q.push(a);
+      }
+    }
+  }
+  out.delete(startId); // ne renvoie que les prérequis
+  return out;
+}
+
+export function toggleSelect(id) {
+  const rules = getActiveRules();
+  const cur = new Set(get(selected));
+
+  if (cur.has(id)) {
+    // Désélection simple (on ne “désauto-sélectionne” pas les obligations)
+    cur.delete(id);
+    selected.set(cur);
+    return;
+  }
+
+  // Ajout avec auto-obligatoires
+  const auto = mandatoryClosure(id, rules); // ex: pour B, renvoie {A, ...}
+  const newlyAdded = [];
+  cur.add(id);
+  for (const a of auto) {
+    if (!cur.has(a)) {
+      cur.add(a);
+      newlyAdded.push(a);
+    }
+  }
+  selected.set(cur);
+
+  // Animation blink via l'event 'flash' sur <svg>
+  try {
+    const svg = get(graphEl);
+    if (svg && newlyAdded.length) {
+      svg.dispatchEvent(new CustomEvent('flash', { detail: newlyAdded }));
+    }
+  } catch {}
+}
+
+/* =========================================
+ * Réinitialisation complète
  * ======================================= */
 export function resetAll() {
-  // UI
   mode.set('editor');
   search.set('');
   collapsed.set({});
-  setTheme('light'); // ou 'dark' si tu veux par défaut
+  setTheme('light');
 
-  // Domaine
   data.set({});
   grouped.set({});
   gammes.set({ Smart: {}, Mod: {}, Evo: {} });
