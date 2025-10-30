@@ -9,13 +9,17 @@
     "preview": "vite preview",
     "format": "prettier -w .",
     "start": "node server/index.js",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "create-user": "node scripts/create-user.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^9.6.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "d3": "7.9.0",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
     "svelte": "4.2.18"
   },
   "devDependencies": {

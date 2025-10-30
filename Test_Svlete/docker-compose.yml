@@ -3,4 +3,10 @@ services:
     build: .
     ports:
       - "80:3000"        # visite http://<IP_du_Raspberry>/
+    environment:
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_TTL_SECONDS=${JWT_TTL_SECONDS}
+      - BOOTSTRAP_USERNAME=${BOOTSTRAP_USERNAME}
+      - BOOTSTRAP_PASSWORD=${BOOTSTRAP_PASSWORD}
     restart: unless-stopped

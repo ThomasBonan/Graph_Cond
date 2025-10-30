@@ -4,7 +4,7 @@ import { writable, get } from 'svelte/store';
 export const graphEl = writable(null);
 
 /* =========================================
- * Thème (light/dark) + persistance
+ * Theme (light/dark) + persistance
  * ======================================= */
 const initialTheme =
   (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) || 'light';
@@ -48,13 +48,20 @@ export const gammes = writable({
 });
 export const optionLabels = writable({});
 export const rulesets = writable({
-  // Nouveau schéma: { rules: { fromId: { requires:[], incompatible_with:[], mandatory:[] } } }
+  // Nouveau schema: { rules: { fromId: { requires:[], incompatible_with:[], mandatory:[] } } }
   default: { rules: {} }
 });
 export const currentRulesetName = writable('default');
 export const selected = writable(new Set());
 export const savedSchemas = writable([]);
 export const activeSchema = writable(null);
+export const authUser = writable(null);
+export const authStatus = writable('unknown'); // 'unknown' | 'authenticated' | 'anonymous'
+export const editorDirty = writable(false);
+export const draftAvailable = writable(false);
+export const undoAvailable = writable(false);
+export const redoAvailable = writable(false);
+export const searchFilters = writable({ group: 'all', gammes: [] });
 
 /* ------------ Helpers internes ----------- */
 function normalizeArr(a) {
@@ -63,8 +70,8 @@ function normalizeArr(a) {
 
 /* =========================================
  * Normalisation Rulesets
- *  - ajoute 'mandatory' (aussi 'obligatoire' accepté)
- *  - rétro-compat ancien format { target: "requires"|"incompatible"|... }
+ *  - ajoute 'mandatory' (aussi 'obligatoire' accepte)
+ *  - retro-compat ancien format { target: "requires"|"incompatible"|... }
  * ======================================= */
 function normalizeRuleSets(raw) {
   const out = {};
@@ -104,118 +111,435 @@ function normalizeRuleSets(raw) {
   return out;
 }
 
-function hydrateFromPayload(obj = {}) {
-  const g = obj?.gammes || { Smart: {}, Mod: {}, Evo: {} };
+const DRAFT_PREFIX = 'schema-draft:';
+const HISTORY_LIMIT = 50;
+let suppressTracking = 0;
+let baselinePayloadJSON = null;
+let autoSaveTimer = null;
+let lastDraftJSON = null;
+const undoStack = [];
+const redoStack = [];
+let isRestoringHistory = false;
+let lastSchemaIdForDraft = null;
+const trackedStores = [];
+let trackingReady = false;
+let lastRulesSnapshot = {};
 
-  let hier = {};
-  if (obj?.groupedSubgroups && Object.keys(obj.groupedSubgroups).length) {
-    for (const [grp, val] of Object.entries(obj.groupedSubgroups)) {
-      const root = Array.isArray(val.__root) ? val.__root : [];
-      const sub = val.subgroups || {};
-      hier[grp] = { root, subgroups: sub };
+function hydrateFromPayload(obj = {}, { captureBaseline = true, schemaId = null } = {}) {
+  let chosenRuleset = 'default';
+  runWithoutTracking(() => {
+    const g = obj?.gammes || { Smart: {}, Mod: {}, Evo: {} };
+
+    let hier = {};
+    if (obj?.groupedSubgroups && Object.keys(obj.groupedSubgroups).length) {
+      for (const [grp, val] of Object.entries(obj.groupedSubgroups)) {
+        const root = Array.isArray(val.__root) ? val.__root : [];
+        const sub = val.subgroups || {};
+        hier[grp] = { root, subgroups: sub };
+      }
+    } else if (obj?.groupedCriteria && Object.keys(obj.groupedCriteria).length) {
+      for (const [grp, ids] of Object.entries(obj.groupedCriteria)) {
+        hier[grp] = { root: Array.from(new Set(ids || [])), subgroups: {} };
+      }
+    } else {
+      const all = Array.from(
+        new Set([
+          ...Object.keys(g.Smart || {}),
+          ...Object.keys(g.Mod || {}),
+          ...Object.keys(g.Evo || {})
+        ])
+      );
+      hier = { 'Options importees': { root: all, subgroups: {} } };
     }
-  } else if (obj?.groupedCriteria && Object.keys(obj.groupedCriteria).length) {
-    for (const [grp, ids] of Object.entries(obj.groupedCriteria)) {
-      hier[grp] = { root: Array.from(new Set(ids || [])), subgroups: {} };
-    }
-  } else {
-    const all = Array.from(
-      new Set([
-        ...Object.keys(g.Smart || {}),
-        ...Object.keys(g.Mod || {}),
-        ...Object.keys(g.Evo || {})
-      ])
+
+    const labels =
+      obj?.optionLabels && Object.keys(obj.optionLabels).length
+        ? obj.optionLabels
+        : (() => {
+            const set = new Set();
+            Object.values(hier).forEach((o) => {
+              (o.root || []).forEach((id) => set.add(id));
+              Object.values(o.subgroups || {}).forEach((ids) =>
+                (ids || []).forEach((id) => set.add(id))
+              );
+            });
+            return Object.fromEntries(Array.from(set).map((id) => [id, id]));
+          })();
+
+    data.set(
+      Object.fromEntries(
+        Object.entries(hier).map(([group, objG]) => {
+          const set = new Set([...(objG.root || [])]);
+          Object.values(objG.subgroups || {}).forEach((ids) =>
+            (ids || []).forEach((id) => set.add(id))
+          );
+          const ids = Array.from(set);
+          return [
+            group,
+            ids.map((id) => ({
+              id,
+              name: labels[id] || id,
+              gammes: {
+                Smart: g.Smart?.[id]?.included
+                  ? 'included'
+                  : g.Smart?.[id]?.optional
+                    ? 'optional'
+                    : 'absent',
+                Mod: g.Mod?.[id]?.included
+                  ? 'included'
+                  : g.Mod?.[id]?.optional
+                    ? 'optional'
+                    : 'absent',
+                Evo: g.Evo?.[id]?.included
+                  ? 'included'
+                  : g.Evo?.[id]?.optional
+                    ? 'optional'
+                    : 'absent'
+              }
+            }))
+          ];
+        })
+      )
     );
-    hier = { 'Options importées': { root: all, subgroups: {} } };
+
+    grouped.set(hier);
+    optionLabels.set(labels);
+    gammes.set(g);
+
+    const normalized = normalizeRuleSets(obj?.ruleSets);
+    const countRules = (rs) =>
+      Object.values(rs?.rules || {}).reduce(
+        (n, r) =>
+          n +
+          (r?.requires?.length || 0) +
+          (r?.incompatible_with?.length || 0) +
+          (r?.mandatory?.length || 0),
+        0
+      );
+
+    const keys = Object.keys(normalized);
+    const bestByCount = keys.reduce(
+      (best, k) => {
+        const c = countRules(normalized[k]);
+        return c > best.c ? { k, c } : best;
+      },
+      { k: keys[0] || 'default', c: -1 }
+    ).k;
+
+    const wanted =
+      obj?.activeRuleset || obj?.currentRulesetName || obj?.rulesetName || null;
+    const chosen =
+      wanted && normalized[wanted] ? wanted : bestByCount || keys[0] || 'default';
+
+    rulesets.set(normalized);
+    currentRulesetName.set(chosen);
+    selected.set(new Set());
+    chosenRuleset = chosen;
+  });
+
+  lastRulesSnapshot = getCurrentRulesSnapshot();
+
+  if (captureBaseline) {
+    setBaseline({ schemaId, resetHistory: true });
+  } else {
+    clearUndoRedo();
+    trackingReady = true;
+    markStateChanged();
   }
 
-  const labels =
-    obj?.optionLabels && Object.keys(obj.optionLabels).length
-      ? obj.optionLabels
-      : (() => {
-          const set = new Set();
-          Object.values(hier).forEach((o) => {
-            (o.root || []).forEach((id) => set.add(id));
-            Object.values(o.subgroups || {}).forEach((ids) =>
-              (ids || []).forEach((id) => set.add(id))
-            );
-          });
-          return Object.fromEntries(Array.from(set).map((id) => [id, id]));
-        })();
+  return { ruleset: chosenRuleset };
+}
 
-  data.set(
-    Object.fromEntries(
-      Object.entries(hier).map(([group, objG]) => {
-        const set = new Set([...(objG.root || [])]);
-        Object.values(objG.subgroups || {}).forEach((ids) =>
-          (ids || []).forEach((id) => set.add(id))
-        );
-        const ids = Array.from(set);
-        return [
-          group,
-          ids.map((id) => ({
-            id,
-            name: labels[id] || id,
-            gammes: {
-              Smart: g.Smart?.[id]?.included
-                ? 'included'
-                : g.Smart?.[id]?.optional
-                  ? 'optional'
-                  : 'absent',
-              Mod: g.Mod?.[id]?.included
-                ? 'included'
-                : g.Mod?.[id]?.optional
-                  ? 'optional'
-                  : 'absent',
-              Evo: g.Evo?.[id]?.included
-                ? 'included'
-                : g.Evo?.[id]?.optional
-                  ? 'optional'
-                  : 'absent'
-            }
-          }))
-        ];
-      })
-    )
+function runWithoutTracking(fn) {
+  suppressTracking++;
+  try {
+    return fn();
+  } finally {
+    suppressTracking = Math.max(0, suppressTracking - 1);
+  }
+}
+
+function draftKeyFor(schema) {
+  if (typeof localStorage === 'undefined') return null;
+  if (schema && schema.id) return `${DRAFT_PREFIX}id:${schema.id}`;
+  const name = get(currentRulesetName);
+  return `${DRAFT_PREFIX}name:${name || 'default'}`;
+}
+
+function currentDraftKey() {
+  const schema = get(activeSchema);
+  if (schema?.id) return draftKeyFor(schema);
+  if (lastSchemaIdForDraft) return draftKeyFor({ id: lastSchemaIdForDraft });
+  return draftKeyFor(schema);
+}
+
+function ensureDraftRemoved(key) {
+  if (typeof localStorage === 'undefined' || !key) return;
+  try { localStorage.removeItem(key); } catch {}
+}
+
+function clearDraftForCurrent() {
+  ensureDraftRemoved(currentDraftKey());
+  draftAvailable.set(false);
+  lastDraftJSON = baselinePayloadJSON;
+}
+
+function getCurrentRulesSnapshot() {
+  const rsAll = get(rulesets) || {};
+  const name = get(currentRulesetName) || 'default';
+  const payload = rsAll[name] || {};
+  return cloneRulesSnapshot(payload.rules || {});
+}
+
+function syncDraftStatusFromStorage({ schemaId = null } = {}) {
+  if (typeof localStorage === 'undefined') {
+    draftAvailable.set(false);
+    lastDraftJSON = baselinePayloadJSON;
+    return;
+  }
+  let key = null;
+  if (schemaId !== null && schemaId !== undefined) {
+    key = draftKeyFor({ id: schemaId });
+  } else {
+    key = currentDraftKey();
+  }
+  if (!key) {
+    draftAvailable.set(false);
+    lastDraftJSON = baselinePayloadJSON;
+    return;
+  }
+  let stored = null;
+  try {
+    stored = localStorage.getItem(key);
+  } catch (err) {
+    console.warn("Impossible de lire le brouillon local", err);
+  }
+  if (stored && baselinePayloadJSON && stored === baselinePayloadJSON) {
+    ensureDraftRemoved(key);
+    stored = null;
+  }
+  draftAvailable.set(Boolean(stored));
+  lastDraftJSON = stored || baselinePayloadJSON;
+}
+
+function setBaseline({ schemaId = null, resetHistory = false } = {}) {
+  baselinePayloadJSON = buildPayloadJSON();
+  if (resetHistory) {
+    clearUndoRedo();
+  }
+  editorDirty.set(false);
+  trackingReady = true;
+  lastRulesSnapshot = getCurrentRulesSnapshot();
+  lastSchemaIdForDraft = schemaId ?? get(activeSchema)?.id ?? null;
+  syncDraftStatusFromStorage({ schemaId: lastSchemaIdForDraft });
+}
+
+function ensureTrackingSetup() {
+  if (trackedStores.length) return;
+  trackedStores.push(
+    data.subscribe(handleGeneralChange),
+    grouped.subscribe(handleGeneralChange),
+    gammes.subscribe(handleGeneralChange),
+    optionLabels.subscribe(handleGeneralChange),
+    currentRulesetName.subscribe(handleRulesetNameChange),
+    rulesets.subscribe(handleRulesChange),
+    activeSchema.subscribe(handleActiveSchemaChange)
   );
+}
 
-  grouped.set(hier);
-  optionLabels.set(labels);
-  gammes.set(g);
+function handleGeneralChange() {
+  if (!trackingReady || suppressTracking > 0) return;
+  markStateChanged();
+}
 
-  const normalized = normalizeRuleSets(obj?.ruleSets);
-  const countRules = (rs) =>
-    Object.values(rs?.rules || {}).reduce(
-      (n, r) =>
-        n +
-        (r?.requires?.length || 0) +
-        (r?.incompatible_with?.length || 0) +
-        (r?.mandatory?.length || 0),
-      0
-    );
+function handleRulesChange(rsAll) {
+  const name = get(currentRulesetName) || 'default';
+  const currentSnapshot = cloneRulesSnapshot(rsAll?.[name]?.rules || {});
+  if (!trackingReady || suppressTracking > 0) {
+    lastRulesSnapshot = currentSnapshot;
+    return;
+  }
+  if (isRestoringHistory) {
+    lastRulesSnapshot = currentSnapshot;
+    return;
+  }
+  const previousJSON = JSON.stringify(lastRulesSnapshot || {});
+  const currentJSON = JSON.stringify(currentSnapshot || {});
+  if (currentJSON === previousJSON) {
+    return;
+  }
+  pushHistorySnapshot(cloneRulesSnapshot(lastRulesSnapshot || {}));
+  lastRulesSnapshot = currentSnapshot;
+  markStateChanged();
+}
 
-  const keys = Object.keys(normalized);
-  const bestByCount = keys.reduce(
-    (best, k) => {
-      const c = countRules(normalized[k]);
-      return c > best.c ? { k, c } : best;
-    },
-    { k: keys[0] || 'default', c: -1 }
-  ).k;
+function handleRulesetNameChange() {
+  const snapshot = getCurrentRulesSnapshot();
+  lastRulesSnapshot = snapshot;
+  if (!trackingReady || suppressTracking > 0) return;
+  markStateChanged();
+}
 
-  const wanted =
-    obj?.activeRuleset || obj?.currentRulesetName || obj?.rulesetName || null;
-  const chosen =
-    wanted && normalized[wanted] ? wanted : bestByCount || keys[0] || 'default';
+function handleActiveSchemaChange(schema) {
+  lastSchemaIdForDraft = schema?.id ?? null;
+  if (!trackingReady) return;
+  syncDraftStatusFromStorage({ schemaId: lastSchemaIdForDraft });
+}
 
-  rulesets.set(normalized);
-  currentRulesetName.set(chosen);
-  selected.set(new Set());
-  return { ruleset: chosen };
+function scheduleDraftSave(payloadJson) {
+  if (typeof localStorage === 'undefined') return;
+  if (!trackingReady) return;
+  if (payloadJson === lastDraftJSON) return;
+  lastDraftJSON = payloadJson;
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    autoSaveTimer = null;
+    const key = currentDraftKey();
+    if (!key) return;
+    const jsonToPersist = lastDraftJSON;
+    if (baselinePayloadJSON && jsonToPersist === baselinePayloadJSON) {
+      ensureDraftRemoved(key);
+      draftAvailable.set(false);
+      return;
+    }
+    try {
+      const existing = localStorage.getItem(key);
+      if (existing === jsonToPersist) {
+        draftAvailable.set(true);
+        return;
+      }
+      localStorage.setItem(key, jsonToPersist);
+      draftAvailable.set(true);
+    } catch (err) {
+      console.warn("Impossible d'enregistrer le brouillon local", err);
+    }
+  }, 400);
+}
+
+if (typeof window !== 'undefined') {
+  ensureTrackingSetup();
+  if (!trackingReady) {
+    setBaseline({ resetHistory: true });
+  }
+}
+
+function clearUndoRedo() {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  undoAvailable.set(false);
+  redoAvailable.set(false);
+}
+
+function cloneRulesSnapshot(rules) {
+  return JSON.parse(JSON.stringify(rules || {}));
+}
+
+function pushHistorySnapshot(snapshot) {
+  if (!snapshot) return;
+  undoStack.push(snapshot);
+  while (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  undoAvailable.set(undoStack.length > 0);
+  redoStack.length = 0;
+  redoAvailable.set(false);
+}
+
+function applyRulesSnapshot(snapshot) {
+  if (!snapshot) return;
+  runWithoutTracking(() => {
+    isRestoringHistory = true;
+    rulesets.update((rs0) => {
+      const name = get(currentRulesetName) || 'default';
+      const payload = rs0[name] || { rules: {} };
+      return { ...rs0, [name]: { ...payload, rules: cloneRulesSnapshot(snapshot) } };
+    });
+    isRestoringHistory = false;
+  });
+  markStateChanged();
+}
+
+export function undoRules() {
+  if (!undoStack.length) return false;
+  const currentName = get(currentRulesetName) || 'default';
+  const rsAll = get(rulesets) || {};
+  const payload = rsAll[currentName] || { rules: {} };
+  const current = cloneRulesSnapshot(payload.rules);
+  const snapshot = undoStack.pop();
+  redoStack.push(current);
+  while (redoStack.length > HISTORY_LIMIT) redoStack.shift();
+  redoAvailable.set(redoStack.length > 0);
+  undoAvailable.set(undoStack.length > 0);
+  applyRulesSnapshot(snapshot);
+  return true;
+}
+
+export function redoRules() {
+  if (!redoStack.length) return false;
+  const currentName = get(currentRulesetName) || 'default';
+  const rsAll = get(rulesets) || {};
+  const payload = rsAll[currentName] || { rules: {} };
+  const current = cloneRulesSnapshot(payload.rules);
+  const snapshot = redoStack.pop();
+  undoStack.push(current);
+  while (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  undoAvailable.set(undoStack.length > 0);
+  redoAvailable.set(redoStack.length > 0);
+  applyRulesSnapshot(snapshot);
+  return true;
+}
+
+
+function buildPayloadJSON() {
+  try {
+    return JSON.stringify(buildPayload());
+  } catch (err) {
+    console.warn('Impossible de generer le payload courant', err);
+    return null;
+  }
+}
+
+function markStateChanged() {
+  if (!trackingReady || suppressTracking > 0) return;
+  const json = buildPayloadJSON();
+  if (!json) return;
+  const dirty = baselinePayloadJSON === null || json !== baselinePayloadJSON;
+  editorDirty.set(dirty);
+  if (!dirty) {
+    const key = currentDraftKey();
+    if (key) ensureDraftRemoved(key);
+    draftAvailable.set(false);
+    lastDraftJSON = baselinePayloadJSON;
+    return;
+  }
+  if (get(mode) === 'editor') {
+    scheduleDraftSave(json);
+  }
+}
+
+export function restoreDraft() {
+  if (typeof localStorage === 'undefined') return false;
+  const key = currentDraftKey();
+  if (!key) return false;
+  const stored = localStorage.getItem(key);
+  if (!stored) return false;
+  try {
+    const payload = JSON.parse(stored);
+    hydrateFromPayload(payload, { captureBaseline: false });
+    return true;
+  } catch (err) {
+    console.warn('Impossible de restaurer le brouillon', err);
+    return false;
+  }
+}
+
+export async function duplicateCurrentSchema(newName) {
+  const trimmed = String(newName || '').trim();
+  if (!trimmed) throw new Error('Nom de duplication obligatoire');
+  const payload = buildPayload();
+  return saveSchemaToDatabase(trimmed, { payloadOverride: payload, skipSetActive: false });
 }
 
 /* =========================================
- * Import JSON (identique, mais rulesets normalisés
+ * Import JSON (identique, mais rulesets normalises
  * pour inclure 'mandatory')
  * ======================================= */
 export async function importJSON(file) {
@@ -247,7 +571,7 @@ export async function importJSON(file) {
     obj = out;
   }
 
-  hydrateFromPayload(obj);
+  hydrateFromPayload(obj, { captureBaseline: false });
   activeSchema.set(null);
 }
 
@@ -352,7 +676,11 @@ async function apiFetch(path, options = {}) {
 
   let response;
   try {
-    response = await fetch(url, { ...options, headers });
+    response = await fetch(url, {
+      ...options,
+      headers,
+      credentials: 'include'
+    });
   } catch (err) {
     throw new Error("Impossible de joindre l'API de persistance");
   }
@@ -366,10 +694,72 @@ async function apiFetch(path, options = {}) {
     const error = new Error(message);
     error.status = response.status;
     error.body = body;
+    if (response.status === 401) {
+      authUser.set(null);
+      authStatus.set('anonymous');
+    }
     throw error;
   }
 
   return body;
+}
+
+export async function checkAuth() {
+  try {
+    const data = await apiFetch('/api/auth/me');
+    if (data?.user) {
+      authUser.set(data.user);
+      authStatus.set('authenticated');
+      return data.user;
+    }
+    authUser.set(null);
+    authStatus.set('anonymous');
+    return null;
+  } catch (err) {
+    if (err?.status === 401) {
+      authUser.set(null);
+      authStatus.set('anonymous');
+      return null;
+    }
+    throw err;
+  }
+}
+
+export async function loginUser(username, password) {
+  const creds = {
+    username: (username || '').trim(),
+    password: password || ''
+  };
+  if (!creds.username || !creds.password) {
+    throw new Error('Identifiants requis.');
+  }
+  try {
+    const data = await apiFetch('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(creds)
+    });
+    if (!data?.user) {
+      throw new Error('Reponse de connexion invalide.');
+    }
+    authUser.set(data.user);
+    authStatus.set('authenticated');
+    return data.user;
+  } catch (err) {
+    if (err?.status === 401) {
+      authUser.set(null);
+      authStatus.set('anonymous');
+    }
+    throw err;
+  }
+}
+
+export async function logoutUser() {
+  try {
+    await apiFetch('/api/auth/logout', { method: 'POST' });
+  } finally {
+    authUser.set(null);
+    authStatus.set('anonymous');
+  }
 }
 
 export async function refreshSavedSchemas() {
@@ -388,23 +778,34 @@ export async function loadSchemaFromDatabase(id) {
   if (!id) throw new Error('Schema id manquant');
   const record = await apiFetch(`/api/schemas/${id}`);
   if (!record?.payload) throw new Error('Reponse inattendue depuis le serveur');
-  hydrateFromPayload(record.payload);
+  hydrateFromPayload(record.payload, { schemaId: record.id });
   activeSchema.set({ id: record.id, name: record.name, updated_at: record.updated_at });
   return record;
 }
 
-export async function saveSchemaToDatabase(name, { id = null } = {}) {
+export async function saveSchemaToDatabase(
+  name,
+  { id = null, payloadOverride = null, skipSetActive = false } = {}
+) {
   const trimmed = String(name || '').trim();
   if (!trimmed) throw new Error('Nom de schema obligatoire');
 
-  const payload = buildPayload();
+  const payload = payloadOverride || buildPayload();
   const body = { name: trimmed, payload };
   if (id) body.id = id;
 
-  const record = await apiFetch('/api/schemas', {
-    method: 'POST',
-    body: JSON.stringify(body)
-  });
+  let record;
+  try {
+    record = await apiFetch('/api/schemas', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+  } catch (err) {
+    if (err?.status === 401) {
+      throw new Error('Connexion requise pour enregistrer un schema.');
+    }
+    throw err;
+  }
 
   savedSchemas.update((items) => {
     const remaining = Array.isArray(items) ? items.filter((it) => it.id !== record.id) : [];
@@ -420,13 +821,23 @@ export async function saveSchemaToDatabase(name, { id = null } = {}) {
       return bDate - aDate;
     });
   });
-  activeSchema.set({ id: record.id, name: record.name, updated_at: record.updated_at });
+  if (!skipSetActive) {
+    activeSchema.set({ id: record.id, name: record.name, updated_at: record.updated_at });
+  }
+  setBaseline({ schemaId: record.id, resetHistory: false });
   return record;
 }
 
 export async function deleteSchemaFromDatabase(id) {
   if (!id) return;
-  await apiFetch(`/api/schemas/${id}`, { method: 'DELETE' });
+  try {
+    await apiFetch(`/api/schemas/${id}`, { method: 'DELETE' });
+  } catch (err) {
+    if (err?.status === 401) {
+      throw new Error('Connexion requise pour supprimer un schema.');
+    }
+    throw err;
+  }
   savedSchemas.update((items) => items.filter((item) => item.id !== id));
   if (get(activeSchema)?.id === id) {
     activeSchema.set(null);
@@ -434,7 +845,7 @@ export async function deleteSchemaFromDatabase(id) {
 }
 
 /* =========================================
- * Sélection + auto-ajout obligatoire
+ * Selection + auto-ajout obligatoire
  * ======================================= */
 function getActiveRules() {
   const rsAll = get(rulesets);
@@ -456,7 +867,7 @@ function mandatoryClosure(startId, rules) {
       }
     }
   }
-  out.delete(startId); // ne renvoie que les prérequis
+  out.delete(startId); // ne renvoie que les prerequis
   return out;
 }
 
@@ -465,7 +876,7 @@ export function toggleSelect(id) {
   const cur = new Set(get(selected));
 
   if (cur.has(id)) {
-    // Désélection simple (on ne “désauto-sélectionne” pas les obligations)
+    // Deselection simple (on ne “desauto-selectionne” pas les obligations)
     cur.delete(id);
     selected.set(cur);
     return;
@@ -493,7 +904,7 @@ export function toggleSelect(id) {
 }
 
 /* =========================================
- * Réinitialisation complète
+ * Reinitialisation complete
  * ======================================= */
 export function resetAll() {
   mode.set('editor');

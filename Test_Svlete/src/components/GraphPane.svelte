@@ -4,7 +4,7 @@
   import {
     graphEl, grouped, gammes, optionLabels,
     rulesets, currentRulesetName, selected,
-    search, collapsed, toggleSelect, mode, activeSchema
+    search, searchFilters, collapsed, toggleSelect, mode, activeSchema
   } from '../lib/stores.js';
 
   let svgEl;
@@ -19,6 +19,7 @@
 
     cleanup = renderGraph(svgEl, {
       search: $search,
+      filters: $searchFilters,
       collapsed: $collapsed,
       grouped: $grouped,
       gammes: $gammes,
@@ -53,6 +54,7 @@
       rulesets.subscribe(() => rerender(true)),
       currentRulesetName.subscribe(() => rerender(true)),
       search.subscribe(() => rerender(true)),
+      searchFilters.subscribe(() => rerender(true)),
       collapsed.subscribe(() => rerender(true)),
       selected.subscribe(() => rerender(true)),
       mode.subscribe(() => rerender(true)),

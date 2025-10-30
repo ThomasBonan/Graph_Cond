@@ -120,6 +120,7 @@ export function renderGraph(svgEl, ctx) {
   const st = _zoomState.get(svgEl) || { transform: null, userZoomed: false };
   const {
     search = '',
+    filters = {},
     collapsed = {},
     grouped = {},
     gammes = { Smart:{}, Mod:{}, Evo:{} },
@@ -188,6 +189,17 @@ export function renderGraph(svgEl, ctx) {
     const labelLower = normalize(optionLabelsMap?.[id] || id);
     const idLower = normalize(id);
     return matchesText(labelLower) || matchesText(idLower);
+  };
+  const filterGroup = (filters?.group && filters.group !== 'all') ? filters.group : null;
+  const activeGammes = Array.isArray(filters?.gammes) ? filters.gammes.filter(Boolean) : [];
+  const filtersActive = activeGammes.length > 0 || !!filterGroup;
+  const gammesMap = gammes || { Smart: {}, Mod: {}, Evo: {} };
+  const matchesGamme = (id) => {
+    if (!activeGammes.length) return true;
+    return activeGammes.some((key) => {
+      const entry = gammesMap?.[key]?.[id];
+      return entry?.included || entry?.optional;
+    });
   };
 
   const cssVar = (v, d) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d;
@@ -289,6 +301,9 @@ export function renderGraph(svgEl, ctx) {
   let gx=gxStart, drawn=0;
 
   for (const [groupName, v] of Object.entries(grouped)) {
+    if (filterGroup && groupName !== filterGroup) {
+      continue;
+    }
     const subs = v?.subgroups || {};
     const entries = [
       ...Object.entries(subs).map(([sg, ids]) => ({ sg, ids })),
@@ -296,18 +311,22 @@ export function renderGraph(svgEl, ctx) {
     ];
 
     const groupMatch = matchesText(groupName);
+    const groupFilterMatch = !filterGroup || groupName === filterGroup;
     const filteredEntries = entries.map(({ sg, ids }) => {
       const list = ids || [];
       const subgroupMatch = sg === '__root' ? false : matchesText(sg);
       const keepAll = hasSearch && (groupMatch || subgroupMatch);
-      const filteredIds = hasSearch
-        ? (keepAll ? list : list.filter((id) => optionMatchesSearch(id, optionLabels)))
-        : list;
+      const filteredIds = list.filter((id) => {
+        if (!matchesGamme(id)) return false;
+        if (!hasSearch) return true;
+        if (keepAll) return true;
+        return optionMatchesSearch(id, optionLabels);
+      });
       const count = filteredIds.length;
       const height = Math.max(count * itemGapY + 40, 50);
       const key = sg === '__root' ? '__root' : sg;
       const collapsedSG =
-        hasSearch && (groupMatch || subgroupMatch || count > 0)
+        (hasSearch || filtersActive) && (groupMatch || subgroupMatch || count > 0)
           ? false
           : !!collapsed[groupName]?.[key];
       return {
@@ -320,10 +339,10 @@ export function renderGraph(svgEl, ctx) {
         subgroupMatch,
         groupMatch
       };
-    }).filter((entry) => entry.count > 0 || !hasSearch);
+    }).filter((entry) => entry.count > 0 || (!hasSearch && !filtersActive));
 
     const hasEntryMatch = filteredEntries.some((entry) => entry.count > 0);
-    const forceGroupOpen = hasSearch && (groupMatch || hasEntryMatch);
+    const forceGroupOpen = (hasSearch || filtersActive) && (groupMatch || hasEntryMatch);
     const groupCollapsed = forceGroupOpen ? false : !!collapsed[groupName]?.__group;
 
     if (groupCollapsed) {
@@ -351,7 +370,7 @@ export function renderGraph(svgEl, ctx) {
         align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
       });
       gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
-      if (groupMatch) {
+      if (groupMatch || (filtersActive && groupFilterMatch)) {
         gTitle.classed('search-hit', true).attr('fill', pal.cSelBorder || '#2563eb');
       }
 
@@ -391,7 +410,7 @@ export function renderGraph(svgEl, ctx) {
       align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
     });
     gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
-    if (groupMatch) {
+    if (groupMatch || (filtersActive && groupFilterMatch)) {
       gTitle.classed('search-hit', true).attr('fill', pal.cSelBorder || '#2563eb');
     }
 
@@ -508,9 +527,9 @@ export function renderGraph(svgEl, ctx) {
               const st = (map?.[id]) || { included:false, optional:false };
               return `${gName}: ${st.included ? 'Présent' : (st.optional ? 'Optionnel' : 'Absent')}`;
             };
-            lines.push(sLine('Smart', gammes.Smart));
-            lines.push(sLine('Mod',   gammes.Mod));
-            lines.push(sLine('Evo',   gammes.Evo));
+            lines.push(sLine('Smart', gammesMap.Smart));
+            lines.push(sLine('Mod',   gammesMap.Mod));
+            lines.push(sLine('Evo',   gammesMap.Evo));
 
             const { clientX, clientY } = e;
             showTip(lines, Math.min(clientX, window.innerWidth-10), Math.min(clientY, window.innerHeight-10));
@@ -541,7 +560,7 @@ export function renderGraph(svgEl, ctx) {
         const caseW = optionWidth/3;
         const yPos  = yOpt + rectH + GAMME_BAR_GAP;
         [{key:'Smart', color:pal.cSmart}, {key:'Mod', color:pal.cMod}, {key:'Evo', color:pal.cEvo}].forEach((c, idx) => {
-          const st = (gammes?.[c.key] || {})[id] || { included:false, optional:false };
+          const st = (gammesMap?.[c.key] || {})[id] || { included:false, optional:false };
           const bar = g.append('rect')
             .attr('class','gbar')
             .attr('data-key', c.key)

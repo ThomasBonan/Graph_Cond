@@ -1,12 +1,23 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 
 const PORT = process.env.PORT || 3000;
 const API_PREFIX = '/api';
+const TOKEN_TTL_SECONDS = Number(process.env.JWT_TTL_SECONDS || 900); // 15 min par defaut
+const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
+if (!process.env.JWT_SECRET) {
+  console.warn('[auth] JWT_SECRET is not defined. Using insecure default. Set JWT_SECRET in production.');
+}
+const ROLLING_SESSION = process.env.JWT_ROLLING !== 'false';
+const isProd = process.env.NODE_ENV === 'production';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
@@ -28,6 +39,15 @@ const db = new Database(dbFile);
 db.pragma('journal_mode = WAL');
 
 db.prepare(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )
+`).run();
+
+db.prepare(`
   CREATE TABLE IF NOT EXISTS schemas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -37,29 +57,217 @@ db.prepare(`
   )
 `).run();
 
-const selectAllStmt = db.prepare(
+const selectAllSchemasStmt = db.prepare(
   'SELECT id, name, created_at, updated_at FROM schemas ORDER BY updated_at DESC, id DESC'
 );
-const getByIdStmt = db.prepare(
+const getSchemaByIdStmt = db.prepare(
   'SELECT id, name, payload, created_at, updated_at FROM schemas WHERE id = ?'
 );
-const getByNameStmt = db.prepare('SELECT id FROM schemas WHERE LOWER(name) = LOWER(?)');
-const insertStmt = db.prepare(
+const getSchemaByNameStmt = db.prepare('SELECT id FROM schemas WHERE LOWER(name) = LOWER(?)');
+const insertSchemaStmt = db.prepare(
   'INSERT INTO schemas (name, payload, created_at, updated_at) VALUES (?, ?, ?, ?)'
 );
-const updateStmt = db.prepare(
+const updateSchemaStmt = db.prepare(
   'UPDATE schemas SET name = ?, payload = ?, updated_at = ? WHERE id = ?'
 );
-const deleteStmt = db.prepare('DELETE FROM schemas WHERE id = ?');
+const deleteSchemaStmt = db.prepare('DELETE FROM schemas WHERE id = ?');
+
+const getUserByUsernameStmt = db.prepare(
+  'SELECT id, username, password_hash, created_at FROM users WHERE LOWER(username) = LOWER(?)'
+);
+const getUserByIdStmt = db.prepare(
+  'SELECT id, username, created_at FROM users WHERE id = ?'
+);
+const insertUserStmt = db.prepare(
+  'INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)'
+);
 
 const app = express();
-app.use(cors({ origin: true }));
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    return callback(null, origin);
+  },
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 
-const normalizeName = (name) => String(name || '').trim();
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: isProd,
+  maxAge: TOKEN_TTL_SECONDS * 1000,
+  path: '/'
+};
+
+const clearCookieOptions = {
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: isProd,
+  path: '/'
+};
+
+function normalizeName(name) {
+  return String(name || '').trim();
+}
+
+async function ensureBootstrapUser() {
+  const usernameEnv = process.env.BOOTSTRAP_USERNAME;
+  const passwordEnv = process.env.BOOTSTRAP_PASSWORD;
+  if (!usernameEnv && !passwordEnv) return;
+  if (!usernameEnv || !passwordEnv) {
+    console.warn('[auth] BOOTSTRAP_USERNAME et BOOTSTRAP_PASSWORD doivent etre definis ensemble.');
+    return;
+  }
+  const username = normalizeName(usernameEnv);
+  const password = String(passwordEnv);
+  if (!username) {
+    console.warn('[auth] BOOTSTRAP_USERNAME est vide apres normalisation. Aucun utilisateur cree.');
+    return;
+  }
+  if (password.length < 6) {
+    console.warn('[auth] BOOTSTRAP_PASSWORD doit contenir au moins 6 caracteres. Aucun utilisateur cree.');
+    return;
+  }
+  const existing = getUserByUsernameStmt.get(username);
+  if (existing) {
+    console.log(`[auth] Utilisateur bootstrap "${username}" deja present.`);
+    return;
+  }
+  try {
+    const hash = await bcrypt.hash(password, 12);
+    const createdAt = new Date().toISOString();
+    insertUserStmt.run(username, hash, createdAt);
+    console.log(`[auth] Utilisateur bootstrap "${username}" cree.`);
+  } catch (err) {
+    if (String(err.message || '').includes('UNIQUE')) {
+      console.log(`[auth] Utilisateur bootstrap "${username}" existe deja (conflit UNIQUE).`);
+      return;
+    }
+    console.error('[auth] Echec creation utilisateur bootstrap:', err);
+  }
+}
+
+function signToken(user) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      username: user.username
+    },
+    JWT_SECRET,
+    { expiresIn: TOKEN_TTL_SECONDS }
+  );
+}
+
+function attachUser(req, res, next) {
+  const token = req.cookies?.auth_token;
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = getUserByIdStmt.get(decoded.sub);
+    if (!user) {
+      res.clearCookie('auth_token', clearCookieOptions);
+      req.user = null;
+      return next();
+    }
+    req.user = user;
+    if (ROLLING_SESSION) {
+      res.cookie('auth_token', signToken(user), cookieOptions);
+    }
+    return next();
+  } catch (err) {
+    res.clearCookie('auth_token', clearCookieOptions);
+    req.user = null;
+    return next();
+  }
+}
+
+function requireAuth(req, res, next) {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentification requise' });
+    return;
+  }
+  next();
+}
+
+await ensureBootstrapUser();
+
+app.use(attachUser);
+
+app.post(`${API_PREFIX}/auth/login`, async (req, res) => {
+  const { username, password } = req.body || {};
+  const userInput = normalizeName(username);
+  const passwordInput = String(password || '');
+
+  if (!userInput || !passwordInput) {
+    res.status(400).json({ error: 'Identifiants manquants' });
+    return;
+  }
+
+  const record = getUserByUsernameStmt.get(userInput);
+  if (!record) {
+    res.status(401).json({ error: 'Identifiant ou mot de passe invalide' });
+    return;
+  }
+
+  const ok = await bcrypt.compare(passwordInput, record.password_hash);
+  if (!ok) {
+    res.status(401).json({ error: 'Identifiant ou mot de passe invalide' });
+    return;
+  }
+
+  const user = { id: record.id, username: record.username };
+  const token = signToken(user);
+  res.cookie('auth_token', token, cookieOptions);
+  res.json({ user });
+});
+
+app.post(`${API_PREFIX}/auth/logout`, (req, res) => {
+  res.clearCookie('auth_token', clearCookieOptions);
+  res.status(204).end();
+});
+
+
+app.post(`${API_PREFIX}/auth/users`, requireAuth, async (req, res) => {
+  const { username, password } = req.body || {};
+  const trimmed = normalizeName(username);
+  const passwordInput = String(password || '');
+
+  if (!trimmed || !passwordInput) {
+    res.status(400).json({ error: 'Nom utilisateur et mot de passe requis.' });
+    return;
+  }
+  if (passwordInput.length < 6) {
+    res.status(400).json({ error: 'Le mot de passe doit contenir au moins 6 caracteres.' });
+    return;
+  }
+  const existing = getUserByUsernameStmt.get(trimmed);
+  if (existing) {
+    res.status(409).json({ error: 'Ce nom utilisateur existe deja.' });
+    return;
+  }
+  const hash = await bcrypt.hash(passwordInput, 12);
+  const createdAt = new Date().toISOString();
+  insertUserStmt.run(trimmed, hash, createdAt);
+  res.status(201).json({ user: { username: trimmed, created_at: createdAt } });
+});
+
+app.get(`${API_PREFIX}/auth/me`, (req, res) => {
+  if (!req.user) {
+    res.status(401).json({ error: 'Non authentifie' });
+    return;
+  }
+  res.json({ user: req.user });
+});
 
 app.get(`${API_PREFIX}/schemas`, (_req, res) => {
-  const rows = selectAllStmt.all();
+  const rows = selectAllSchemasStmt.all();
   res.json({ items: rows });
 });
 
@@ -69,7 +277,7 @@ app.get(`${API_PREFIX}/schemas/:id`, (req, res) => {
     res.status(400).json({ error: 'Identifiant invalide' });
     return;
   }
-  const row = getByIdStmt.get(id);
+  const row = getSchemaByIdStmt.get(id);
   if (!row) {
     res.status(404).json({ error: 'Schema introuvable' });
     return;
@@ -83,7 +291,7 @@ app.get(`${API_PREFIX}/schemas/:id`, (req, res) => {
   });
 });
 
-app.post(`${API_PREFIX}/schemas`, (req, res) => {
+app.post(`${API_PREFIX}/schemas`, requireAuth, (req, res) => {
   const { id: rawId, name, payload } = req.body || {};
   const trimmed = normalizeName(name);
   if (!trimmed) {
@@ -101,13 +309,13 @@ app.post(`${API_PREFIX}/schemas`, (req, res) => {
   let targetId = id;
 
   if (!targetId) {
-    const existing = getByNameStmt.get(trimmed);
+    const existing = getSchemaByNameStmt.get(trimmed);
     targetId = existing?.id || null;
   }
 
   if (targetId) {
-    updateStmt.run(trimmed, stringified, now, targetId);
-    const updated = getByIdStmt.get(targetId);
+    updateSchemaStmt.run(trimmed, stringified, now, targetId);
+    const updated = getSchemaByIdStmt.get(targetId);
     res.json({
       id: updated.id,
       name: updated.name,
@@ -118,7 +326,7 @@ app.post(`${API_PREFIX}/schemas`, (req, res) => {
     return;
   }
 
-  const info = insertStmt.run(trimmed, stringified, now, now);
+  const info = insertSchemaStmt.run(trimmed, stringified, now, now);
   res.status(201).json({
     id: info.lastInsertRowid,
     name: trimmed,
@@ -128,7 +336,7 @@ app.post(`${API_PREFIX}/schemas`, (req, res) => {
   });
 });
 
-app.put(`${API_PREFIX}/schemas/:id`, (req, res) => {
+app.put(`${API_PREFIX}/schemas/:id`, requireAuth, (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Identifiant invalide' });
@@ -145,12 +353,12 @@ app.put(`${API_PREFIX}/schemas/:id`, (req, res) => {
     return;
   }
   const now = new Date().toISOString();
-  const target = getByIdStmt.get(id);
+  const target = getSchemaByIdStmt.get(id);
   if (!target) {
     res.status(404).json({ error: 'Schema introuvable' });
     return;
   }
-  updateStmt.run(trimmed, JSON.stringify(payload), now, id);
+  updateSchemaStmt.run(trimmed, JSON.stringify(payload), now, id);
   res.json({
     id,
     name: trimmed,
@@ -160,18 +368,18 @@ app.put(`${API_PREFIX}/schemas/:id`, (req, res) => {
   });
 });
 
-app.delete(`${API_PREFIX}/schemas/:id`, (req, res) => {
+app.delete(`${API_PREFIX}/schemas/:id`, requireAuth, (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Identifiant invalide' });
     return;
   }
-  const target = getByIdStmt.get(id);
+  const target = getSchemaByIdStmt.get(id);
   if (!target) {
     res.status(404).json({ error: 'Schema introuvable' });
     return;
   }
-  deleteStmt.run(id);
+  deleteSchemaStmt.run(id);
   res.status(204).end();
 });
 
