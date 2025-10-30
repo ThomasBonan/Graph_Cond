@@ -168,7 +168,27 @@ export function renderGraph(svgEl, ctx) {
     selectedValue = selected;
   }
 
-  const s = (search || '').toLowerCase();
+  const s = (search || '').trim().toLowerCase();
+  const tokens = s ? s.split(/\s+/).filter(Boolean) : [];
+  const hasSearch = tokens.length > 0;
+  const normalize = (value) =>
+    (value ?? '')
+      .toString()
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase();
+  const matchesText = (value) => {
+    if (!hasSearch) return false;
+    const text = normalize(value);
+    if (!text) return false;
+    return tokens.every((token) => text.includes(token));
+  };
+  const optionMatchesSearch = (id, optionLabelsMap) => {
+    if (!hasSearch) return true;
+    const labelLower = normalize(optionLabelsMap?.[id] || id);
+    const idLower = normalize(id);
+    return matchesText(labelLower) || matchesText(idLower);
+  };
 
   const cssVar = (v, d) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || d;
   const readPalette = () => ({
@@ -275,17 +295,36 @@ export function renderGraph(svgEl, ctx) {
       ...(Array.isArray(v?.root) && v.root.length ? [{ sg: '__root', ids: v.root }] : [])
     ];
 
-    const groupCollapsed = !!collapsed[groupName]?.__group;
-
+    const groupMatch = matchesText(groupName);
     const filteredEntries = entries.map(({ sg, ids }) => {
       const list = ids || [];
-      const filtered = s ? list.filter(id => (optionLabels[id] || id).toLowerCase().includes(s)) : list;
-      const count = filtered.length;
+      const subgroupMatch = sg === '__root' ? false : matchesText(sg);
+      const keepAll = hasSearch && (groupMatch || subgroupMatch);
+      const filteredIds = hasSearch
+        ? (keepAll ? list : list.filter((id) => optionMatchesSearch(id, optionLabels)))
+        : list;
+      const count = filteredIds.length;
       const height = Math.max(count * itemGapY + 40, 50);
       const key = sg === '__root' ? '__root' : sg;
-      const collapsedSG = !!collapsed[groupName]?.[key];
-      return { sg, key, ids: filtered, count, height, collapsed: collapsedSG };
-    }).filter(e => !s || e.count > 0);
+      const collapsedSG =
+        hasSearch && (groupMatch || subgroupMatch || count > 0)
+          ? false
+          : !!collapsed[groupName]?.[key];
+      return {
+        sg,
+        key,
+        ids: filteredIds,
+        count,
+        height,
+        collapsed: collapsedSG,
+        subgroupMatch,
+        groupMatch
+      };
+    }).filter((entry) => entry.count > 0 || !hasSearch);
+
+    const hasEntryMatch = filteredEntries.some((entry) => entry.count > 0);
+    const forceGroupOpen = hasSearch && (groupMatch || hasEntryMatch);
+    const groupCollapsed = forceGroupOpen ? false : !!collapsed[groupName]?.__group;
 
     if (groupCollapsed) {
       const groupWidth  = 1 * subgroupWidth + 2 * padX;
@@ -312,6 +351,9 @@ export function renderGraph(svgEl, ctx) {
         align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
       });
       gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
+      if (groupMatch) {
+        gTitle.classed('search-hit', true).attr('fill', pal.cSelBorder || '#2563eb');
+      }
 
       gx += groupWidth + groupSpacing;
       continue;
@@ -349,8 +391,11 @@ export function renderGraph(svgEl, ctx) {
       align:'middle', padX: GT_PAD_X, padY: GT_PAD_Y, lineH: GT_LINE_H
     });
     gTitle.attr('transform', `translate(0, ${-gTitleH - GT_GAP})`);
+    if (groupMatch) {
+      gTitle.classed('search-hit', true).attr('fill', pal.cSelBorder || '#2563eb');
+    }
 
-    positions.forEach(({ sg, key, ids, x, y, boxH, height, collapsed: isCollapsed }) => {
+    positions.forEach(({ sg, key, ids, x, y, boxH, height, collapsed: isCollapsed, subgroupMatch, groupMatch }) => {
       const sx=x, sy=groupY+y, h=isCollapsed?40:(boxH ?? height);
       contentG.append('rect').attr('class','subgroup-box')
         .attr('x',sx).attr('y',sy).attr('width',subgroupWidth).attr('height',h)
@@ -372,6 +417,9 @@ export function renderGraph(svgEl, ctx) {
 
         headerH = Math.max(20, sgtH + SGT_EXTRA_GAP);
         sgTitle.on('click',()=> onToggleSubgroup(groupName, key));
+        if (subgroupMatch) {
+          sgTitle.classed('search-hit', true).attr('fill', pal.cSelBorder || '#2563eb');
+        }
       } else {
         headerH = 12;
       }
@@ -414,10 +462,13 @@ export function renderGraph(svgEl, ctx) {
         else if (status === 'selected') { boxFill=pal.cSelBg; boxStroke=pal.cSelBorder; filterSel='url(#selglow)'; }
 
         const strokeW = isSel ? 3.0 : 1.0;
-        const faded = isSel ? 1 : (s ? (label.toLowerCase().includes(s) ? 1 : 0.25) : 1);
+        const optionMatch = matchesText(label) || matchesText(id);
+        const highlight = !hasSearch || groupMatch || subgroupMatch || optionMatch;
+        const opacity = isSel ? 1 : (hasSearch ? (highlight ? 1 : 0.18) : 1);
 
         const g = contentG.append('g').attr('data-id', id).attr('data-status', status);
         nodeMap.set(id, g);
+        g.style('opacity', opacity).classed('search-hit', highlight);
 
         const cursor = canClick ? 'pointer' : ((blocked || incompatibleWithSel) ? 'not-allowed' : 'default');
 
@@ -428,7 +479,6 @@ export function renderGraph(svgEl, ctx) {
           .attr('fill',boxFill).attr('stroke',boxStroke)
           .attr('rx',6).attr('ry',6).attr('stroke-width',strokeW)
           .attr('filter', filterSel || null)
-          .style('opacity',faded)
           .style('cursor',cursor)
           .on('click', () => { if (canClick) onToggleSelect(id); })
           .on('mousemove', (e)=>{
@@ -476,8 +526,8 @@ export function renderGraph(svgEl, ctx) {
           .attr('class','node-label')
           .attr('font-size','14px').attr('fill',pal.cText)
           .style('paint-order','stroke fill').attr('stroke',pal.halo).attr('stroke-width',pal.haloW)
-          .style('font-weight', s && label.toLowerCase().includes(s) ? '700' : '500')
-          .style('opacity',faded).style('pointer-events','none');
+          .style('font-weight', highlight ? '700' : '500')
+          .style('pointer-events','none');
 
         const innerW = optionWidth - NODE_PAD_X*2;
         const labelBlockH = wrapLabel(txt, label, xOpt, yOpt, innerW, {
@@ -498,7 +548,7 @@ export function renderGraph(svgEl, ctx) {
             .attr('data-included', st.included ? '1' : '0')
             .attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
             .attr('fill', st.included ? c.color : pal.cBoxBg).attr('stroke', pal.cStroke)
-            .style('opacity', 1).style('pointer-events','none');
+            .style('pointer-events','none');
           if (st.optional) {
             g.append('rect')
               .attr('x', xOpt + idx*caseW).attr('y', yPos).attr('width', caseW).attr('height', 14)
@@ -580,6 +630,9 @@ export function renderGraph(svgEl, ctx) {
     // cadres
     svg.selectAll('.group-box').attr('stroke', pal.cStrokeGroup);
     svg.selectAll('.subgroup-box').attr('stroke', pal.cStrokeWeak);
+    const accent = pal.cSelBorder || '#2563eb';
+    svg.selectAll('.group-title.search-hit').attr('fill', accent);
+    svg.selectAll('.subgroup-title.search-hit').attr('fill', accent);
 
     // nœuds (fond/trait selon status)
     const fillFor = (st) => st==='blocked' ? pal.cReqBg

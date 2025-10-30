@@ -4,7 +4,7 @@
   import {
     graphEl, grouped, gammes, optionLabels,
     rulesets, currentRulesetName, selected,
-    search, collapsed, toggleSelect, mode
+    search, collapsed, toggleSelect, mode, activeSchema
   } from '../lib/stores.js';
 
   let svgEl;
@@ -55,7 +55,8 @@
       search.subscribe(() => rerender(true)),
       collapsed.subscribe(() => rerender(true)),
       selected.subscribe(() => rerender(true)),
-      mode.subscribe(() => rerender(true))
+      mode.subscribe(() => rerender(true)),
+      activeSchema.subscribe(() => rerender(false))
     ];
     return () => { stop.forEach(fn => fn && fn()); cleanup(); };
   });
@@ -223,4 +224,27 @@
 
   .muted { color: var(--c-text-muted); }
   .sep { color: var(--c-text-muted); margin: 0 2px; }
+
+  @media (max-width: 1024px) {
+    .summary-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .rule-row {
+      display: flex;
+      flex-direction: column;
+      background: var(--c-box-bg);
+      border: 1px solid var(--c-stroke);
+      border-radius: 6px;
+      padding: 10px;
+      gap: 6px;
+    }
+    .from {
+      font-size: 14px;
+    }
+    .col {
+      align-items: flex-start;
+    }
+  }
 </style>

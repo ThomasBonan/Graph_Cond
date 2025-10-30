@@ -53,6 +53,8 @@ export const rulesets = writable({
 });
 export const currentRulesetName = writable('default');
 export const selected = writable(new Set());
+export const savedSchemas = writable([]);
+export const activeSchema = writable(null);
 
 /* ------------ Helpers internes ----------- */
 function normalizeArr(a) {
@@ -102,6 +104,116 @@ function normalizeRuleSets(raw) {
   return out;
 }
 
+function hydrateFromPayload(obj = {}) {
+  const g = obj?.gammes || { Smart: {}, Mod: {}, Evo: {} };
+
+  let hier = {};
+  if (obj?.groupedSubgroups && Object.keys(obj.groupedSubgroups).length) {
+    for (const [grp, val] of Object.entries(obj.groupedSubgroups)) {
+      const root = Array.isArray(val.__root) ? val.__root : [];
+      const sub = val.subgroups || {};
+      hier[grp] = { root, subgroups: sub };
+    }
+  } else if (obj?.groupedCriteria && Object.keys(obj.groupedCriteria).length) {
+    for (const [grp, ids] of Object.entries(obj.groupedCriteria)) {
+      hier[grp] = { root: Array.from(new Set(ids || [])), subgroups: {} };
+    }
+  } else {
+    const all = Array.from(
+      new Set([
+        ...Object.keys(g.Smart || {}),
+        ...Object.keys(g.Mod || {}),
+        ...Object.keys(g.Evo || {})
+      ])
+    );
+    hier = { 'Options importées': { root: all, subgroups: {} } };
+  }
+
+  const labels =
+    obj?.optionLabels && Object.keys(obj.optionLabels).length
+      ? obj.optionLabels
+      : (() => {
+          const set = new Set();
+          Object.values(hier).forEach((o) => {
+            (o.root || []).forEach((id) => set.add(id));
+            Object.values(o.subgroups || {}).forEach((ids) =>
+              (ids || []).forEach((id) => set.add(id))
+            );
+          });
+          return Object.fromEntries(Array.from(set).map((id) => [id, id]));
+        })();
+
+  data.set(
+    Object.fromEntries(
+      Object.entries(hier).map(([group, objG]) => {
+        const set = new Set([...(objG.root || [])]);
+        Object.values(objG.subgroups || {}).forEach((ids) =>
+          (ids || []).forEach((id) => set.add(id))
+        );
+        const ids = Array.from(set);
+        return [
+          group,
+          ids.map((id) => ({
+            id,
+            name: labels[id] || id,
+            gammes: {
+              Smart: g.Smart?.[id]?.included
+                ? 'included'
+                : g.Smart?.[id]?.optional
+                  ? 'optional'
+                  : 'absent',
+              Mod: g.Mod?.[id]?.included
+                ? 'included'
+                : g.Mod?.[id]?.optional
+                  ? 'optional'
+                  : 'absent',
+              Evo: g.Evo?.[id]?.included
+                ? 'included'
+                : g.Evo?.[id]?.optional
+                  ? 'optional'
+                  : 'absent'
+            }
+          }))
+        ];
+      })
+    )
+  );
+
+  grouped.set(hier);
+  optionLabels.set(labels);
+  gammes.set(g);
+
+  const normalized = normalizeRuleSets(obj?.ruleSets);
+  const countRules = (rs) =>
+    Object.values(rs?.rules || {}).reduce(
+      (n, r) =>
+        n +
+        (r?.requires?.length || 0) +
+        (r?.incompatible_with?.length || 0) +
+        (r?.mandatory?.length || 0),
+      0
+    );
+
+  const keys = Object.keys(normalized);
+  const bestByCount = keys.reduce(
+    (best, k) => {
+      const c = countRules(normalized[k]);
+      return c > best.c ? { k, c } : best;
+    },
+    { k: keys[0] || 'default', c: -1 }
+  ).k;
+
+  const wanted =
+    obj?.activeRuleset || obj?.currentRulesetName || obj?.rulesetName || null;
+  const chosen =
+    wanted && normalized[wanted] ? wanted : bestByCount || keys[0] || 'default';
+
+  rulesets.set(normalized);
+  currentRulesetName.set(chosen);
+  selected.set(new Set());
+  return { ruleset: chosen };
+}
+
 /* =========================================
  * Import JSON (identique, mais rulesets normalisés
  * pour inclure 'mandatory')
@@ -110,14 +222,24 @@ export async function importJSON(file) {
   const text = await file.text();
   const raw = (text || '').trim();
 
-  // Parse (JSON ou ancien .js exporté)
   let obj = null;
   if (raw.startsWith('{') || raw.startsWith('[')) {
     obj = JSON.parse(raw);
   } else {
     const out = {};
-    for (const key of ['gammes','groupedCriteria','groupedSubgroups','optionLabels','criteria','ruleSets','activeRuleset','currentRulesetName']) {
-      const m = raw.match(new RegExp(`export\\s+const\\s+${key}\\s*=\\s*([\\s\\S]*?);\\s*(?:\\n|$)`));
+    for (const key of [
+      'gammes',
+      'groupedCriteria',
+      'groupedSubgroups',
+      'optionLabels',
+      'criteria',
+      'ruleSets',
+      'activeRuleset',
+      'currentRulesetName'
+    ]) {
+      const m = raw.match(
+        new RegExp(`export\\s+const\\s+${key}\\s*=\\s*([\\s\\S]*?);\\s*(?:\\n|$)`)
+      );
       if (m && m[1]) {
         try { out[key] = JSON.parse(m[1]); } catch {}
       }
@@ -125,86 +247,8 @@ export async function importJSON(file) {
     obj = out;
   }
 
-  const g = obj?.gammes || { Smart:{}, Mod:{}, Evo:{} };
-
-  // Hiérarchie
-  let hier = {};
-  if (obj?.groupedSubgroups && Object.keys(obj.groupedSubgroups).length) {
-    for (const [grp, val] of Object.entries(obj.groupedSubgroups)) {
-      const root = Array.isArray(val.__root) ? val.__root : [];
-      const sub  = val.subgroups || {};
-      hier[grp] = { root, subgroups: sub };
-    }
-  } else if (obj?.groupedCriteria && Object.keys(obj.groupedCriteria).length) {
-    for (const [grp, ids] of Object.entries(obj.groupedCriteria)) {
-      hier[grp] = { root: Array.from(new Set(ids || [])), subgroups: {} };
-    }
-  } else {
-    const all = Array.from(new Set([
-      ...Object.keys(g.Smart || {}),
-      ...Object.keys(g.Mod   || {}),
-      ...Object.keys(g.Evo   || {})
-    ]));
-    hier = { 'Options importées': { root: all, subgroups: {} } };
-  }
-
-  // Labels
-  const labels = (obj?.optionLabels && Object.keys(obj.optionLabels).length)
-    ? obj.optionLabels
-    : (() => {
-        const set = new Set();
-        Object.values(hier).forEach(o => {
-          (o.root || []).forEach(id => set.add(id));
-          Object.values(o.subgroups || {}).forEach(ids => (ids || []).forEach(id => set.add(id)));
-        });
-        return Object.fromEntries(Array.from(set).map(id => [id, id]));
-      })();
-
-  // data (à partir hiérarchie + gammes)
-  data.set(Object.fromEntries(Object.entries(hier).map(([group, objG]) => {
-    const set = new Set([...(objG.root || [])]);
-    Object.values(objG.subgroups || {}).forEach(ids => (ids || []).forEach(id => set.add(id)));
-    const ids = Array.from(set);
-    return [group, ids.map(id => ({
-      id,
-      name: labels[id] || id,
-      gammes: {
-        Smart: g.Smart?.[id]?.included ? 'included' : (g.Smart?.[id]?.optional ? 'optional' : 'absent'),
-        Mod:   g.Mod?.[id]?.included   ? 'included' : (g.Mod?.[id]?.optional   ? 'optional' : 'absent'),
-        Evo:   g.Evo?.[id]?.included   ? 'included' : (g.Evo?.[id]?.optional   ? 'optional' : 'absent')
-      }
-    }))];
-  })));
-
-  grouped.set(hier);
-  optionLabels.set(labels);
-  gammes.set(g);
-
-  // Rulesets + choix actif
-  const normalized = normalizeRuleSets(obj?.ruleSets);
-
-  const countRules = (rs) => Object.values(rs?.rules || {})
-    .reduce((n, r) => n + (r?.requires?.length || 0) + (r?.incompatible_with?.length || 0) + (r?.mandatory?.length || 0), 0);
-
-  const keys = Object.keys(normalized);
-  const bestByCount = keys.reduce((best, k) => {
-    const c = countRules(normalized[k]);
-    return (c > best.c) ? { k, c } : best;
-  }, { k: keys[0] || 'default', c: -1 }).k;
-
-  const wanted =
-    obj?.activeRuleset ||
-    obj?.currentRulesetName ||
-    obj?.rulesetName ||
-    null;
-
-  const chosen = (wanted && normalized[wanted]) ? wanted : (bestByCount || keys[0] || 'default');
-
-  rulesets.set(normalized);
-  currentRulesetName.set(chosen);
-
-  // Reset sélection
-  selected.set(new Set());
+  hydrateFromPayload(obj);
+  activeSchema.set(null);
 }
 
 /* =========================================
@@ -278,6 +322,115 @@ export function downloadJSON(filename = 'commercial.json') {
 }
 export function exportJSON(filename = 'commercial.json') {
   return downloadJSON(filename);
+}
+
+/* =========================================
+ * Persistence via API SQLite
+ * ======================================= */
+const API_BASE = (import.meta.env?.VITE_API_BASE || '').replace(/\/$/, '');
+
+function resolveApiUrl(path = '') {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+}
+
+async function apiFetch(path, options = {}) {
+  if (typeof fetch !== 'function') {
+    throw new Error("fetch n'est pas disponible dans cet environnement");
+  }
+
+  const url = resolveApiUrl(path);
+  const headers = {
+    Accept: 'application/json',
+    ...(options.headers || {})
+  };
+
+  const hasBody = options.body !== undefined;
+  if (hasBody && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  let response;
+  try {
+    response = await fetch(url, { ...options, headers });
+  } catch (err) {
+    throw new Error("Impossible de joindre l'API de persistance");
+  }
+
+  const isJson = (response.headers.get('content-type') || '').includes('application/json');
+  const text = response.status === 204 ? '' : await response.text();
+  const body = isJson && text ? JSON.parse(text) : text ? { message: text } : null;
+
+  if (!response.ok) {
+    const message = body?.error || body?.message || response.statusText || 'Erreur API';
+    const error = new Error(message);
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
+
+  return body;
+}
+
+export async function refreshSavedSchemas() {
+  try {
+    const data = await apiFetch('/api/schemas');
+    const items = Array.isArray(data?.items) ? data.items : [];
+    savedSchemas.set(items);
+    return items;
+  } catch (err) {
+    savedSchemas.set([]);
+    throw err;
+  }
+}
+
+export async function loadSchemaFromDatabase(id) {
+  if (!id) throw new Error('Schema id manquant');
+  const record = await apiFetch(`/api/schemas/${id}`);
+  if (!record?.payload) throw new Error('Reponse inattendue depuis le serveur');
+  hydrateFromPayload(record.payload);
+  activeSchema.set({ id: record.id, name: record.name, updated_at: record.updated_at });
+  return record;
+}
+
+export async function saveSchemaToDatabase(name, { id = null } = {}) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) throw new Error('Nom de schema obligatoire');
+
+  const payload = buildPayload();
+  const body = { name: trimmed, payload };
+  if (id) body.id = id;
+
+  const record = await apiFetch('/api/schemas', {
+    method: 'POST',
+    body: JSON.stringify(body)
+  });
+
+  savedSchemas.update((items) => {
+    const remaining = Array.isArray(items) ? items.filter((it) => it.id !== record.id) : [];
+    const entry = {
+      id: record.id,
+      name: record.name,
+      updated_at: record.updated_at,
+      created_at: record.created_at
+    };
+    return [entry, ...remaining].sort((a, b) => {
+      const aDate = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const bDate = b?.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return bDate - aDate;
+    });
+  });
+  activeSchema.set({ id: record.id, name: record.name, updated_at: record.updated_at });
+  return record;
+}
+
+export async function deleteSchemaFromDatabase(id) {
+  if (!id) return;
+  await apiFetch(`/api/schemas/${id}`, { method: 'DELETE' });
+  savedSchemas.update((items) => items.filter((item) => item.id !== id));
+  if (get(activeSchema)?.id === id) {
+    activeSchema.set(null);
+  }
 }
 
 /* =========================================
@@ -355,4 +508,9 @@ export function resetAll() {
   rulesets.set({ default: { rules: {} } });
   currentRulesetName.set('default');
   selected.set(new Set());
+  activeSchema.set(null);
 }
+
+
+
+

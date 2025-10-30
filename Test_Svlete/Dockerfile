@@ -10,10 +10,18 @@ RUN npm install --no-audit --no-fund --include=optional
 COPY . .
 RUN npm run build
 
-# ---- 2) RUNTIME (Caddy) ----
-FROM caddy:2-alpine
-WORKDIR /srv
-COPY --from=builder /app/dist /srv
-COPY Caddyfile /etc/caddy/Caddyfile
+# ---- 2) RUNTIME (Node + SQLite) ----
+FROM node:20-bookworm
+WORKDIR /app
+ENV NODE_ENV=production
 
-EXPOSE 80 443
+COPY package*.json ./
+RUN npm install --omit=dev --no-audit --no-fund
+
+COPY --from=builder /app/dist ./dist
+COPY server ./server
+
+RUN mkdir -p data
+
+EXPOSE 3000
+CMD ["node", "server/index.js"]

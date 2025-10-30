@@ -131,4 +131,27 @@
     .mainrow { grid-template-columns: 1fr; }
     .summary-pane { order: 2; max-height: 320px; }
   }
+
+  @media (max-width: 900px) {
+    .rowtools {
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .mainrow {
+      padding: 8px 8px 12px;
+    }
+    .summary-pane {
+      min-width: 0;
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .graph-wrap {
+      min-height: 320px;
+    }
+    .rowtools {
+      padding: 8px 8px 0;
+    }
+  }
 </style>
