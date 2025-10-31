@@ -50,6 +50,7 @@
   let loginError = '';
   let loginMessage = '';
   let authLoading = true;
+  let menuOpen = false;
 
   function chooseFile() {
     if (!fileEl) return;
@@ -201,6 +202,13 @@
     searchFilters.set({ group: 'all', gammes: [] });
   }
 
+  function toggleMenu() {
+    menuOpen = !menuOpen;
+  }
+  function closeMenu() {
+    menuOpen = false;
+  }
+
   async function handleLogin(event) {
     event?.preventDefault?.();
     if (loggingIn) return;
@@ -235,18 +243,35 @@
     }
   }
 
-  onMount(async () => {
-    try {
-      await checkAuth();
-    } catch (err) {
-      console.warn('checkAuth', err);
-      authUser.set(null);
-      authStatus.set('anonymous');
-    } finally {
-      authLoading = false;
-      await refreshList();
-      searchValue = $search;
+  onMount(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        closeMenu();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', handleKeyDown);
     }
+
+    (async () => {
+      try {
+        await checkAuth();
+      } catch (err) {
+        console.warn('checkAuth', err);
+        authUser.set(null);
+        authStatus.set('anonymous');
+      } finally {
+        authLoading = false;
+        await refreshList();
+        searchValue = $search;
+      }
+    })();
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('keydown', handleKeyDown);
+      }
+    };
   });
 
   function handleSearchInput(event) {
@@ -298,200 +323,238 @@
 </script>
 
 <div class="topbar">
-  <div class="row row-top">
-    <div class="mode-wrap">
-      <button class="btn btn-sm" type="button" on:click={() => mode.set($mode === 'editor' ? 'commercial' : 'editor')}>
-        {$mode === 'editor' ? 'Commerciale' : 'Editeur'}
-      </button>
-    </div>
-    <div class="schema-wrap">
-      {#if $mode === 'editor'}
-        <label class="visually-hidden" for="schema-name">Nom du schema</label>
-        <input
-          id="schema-name"
-          class="schema-name"
-          placeholder="Nom du schema..."
-          value={schemaName}
-          on:input={handleSchemaInput}
-          disabled={!canEdit}
-        />
-        <div class="schema-actions">
-          <button class="btn btn-sm primary" type="button" on:click={handleSaveSchema} disabled={saving || !canEdit}>
-            {saving ? 'Enregistrement...' : $activeSchema?.id ? 'Mettre a jour' : 'Enregistrer'}
-          </button>
-          <button class="btn btn-sm" type="button" on:click={handleDuplicate} disabled={!canEdit || saving}>
-            Dupliquer
-          </button>
-        </div>
-      {:else}
-        <label class="visually-hidden" for="schema-select">Selection du schema</label>
-        <select
-          id="schema-select"
-          class="schema-name"
-          bind:value={selectedSchemaId}
-          on:change={handleSelectSchema}
-          disabled={loadingSchema || listLoading || !$savedSchemas.length}
-        >
-          <option value="">Selectionner un schema...</option>
-          {#each $savedSchemas as schema}
-            <option value={schema.id}>{schema.name}</option>
-          {/each}
-        </select>
-        <div class="schema-actions">
-          <button class="btn btn-sm" type="button" on:click={refreshList} disabled={listLoading}>
-            {listLoading ? '...' : 'Actualiser'}
-          </button>
-        </div>
-      {/if}
-    </div>
+  <button
+    class="menu-trigger"
+    type="button"
+    aria-label={menuOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
+    aria-expanded={menuOpen}
+    aria-controls="topbar-menu"
+    on:click={toggleMenu}
+  >
+    <span></span>
+    <span></span>
+    <span></span>
+  </button>
+  <div class="topbar-title">
+    <span>{$activeSchema?.name || schemaName || 'Menu'}</span>
   </div>
+</div>
 
-  <div class="row row-bottom">
-    <div class="status-wrap">
-      <span class="status-badge {statusVariant.tone}">{statusVariant.label}</span>
-      {#if $draftAvailable}
-        <button class="btn btn-xs btn-ghost" type="button" on:click={handleRestoreDraftClick}>
-          Restaurer
-        </button>
-      {/if}
-      {#if $mode === 'editor'}
-        <div class="history-actions">
-          <button class="btn btn-sm" type="button" on:click={handleUndo} disabled={!$undoAvailable}>Annuler</button>
-          <button class="btn btn-sm" type="button" on:click={handleRedo} disabled={!$redoAvailable}>Retablir</button>
-        </div>
-      {/if}
-      {#if !canEdit && !authLoading}
-        <span class="auth-warning">Connectez-vous pour creer ou modifier des schemas.</span>
-      {/if}
+<div class="menu-container">
+  <button
+    type="button"
+    class="menu-backdrop"
+    class:show={menuOpen}
+    aria-label="Fermer le menu"
+    on:click={closeMenu}
+  />
+  <aside
+    class="menu-panel"
+    class:open={menuOpen}
+    id="topbar-menu"
+    aria-hidden={!menuOpen}
+  >
+    <div class="menu-header">
+      <h2 class="menu-heading">Menu</h2>
+      <button class="btn btn-sm" type="button" on:click={closeMenu}>Fermer</button>
     </div>
-
-    <div class="auth-wrap">
-      {#if authLoading}
-        <span class="auth-loading">Authentification...</span>
-      {:else if $authUser}
-        <span class="user-badge" title="Utilisateur connecte">{$authUser.username}</span>
-        <button class="btn btn-sm" type="button" on:click={handleLogout}>Se deconnecter</button>
-      {:else}
-        {#if showLogin}
-          <form class="login-form" on:submit|preventDefault={handleLogin}>
-            <label class="visually-hidden" for="login-username">Nom utilisateur</label>
+    <div class="menu-body">
+      <div class="row row-top">
+        <div class="mode-wrap">
+          <button class="btn btn-sm" type="button" on:click={() => mode.set($mode === 'editor' ? 'commercial' : 'editor')}>
+            {$mode === 'editor' ? 'Commerciale' : 'Editeur'}
+          </button>
+        </div>
+        <div class="schema-wrap">
+          {#if $mode === 'editor'}
+            <label class="visually-hidden" for="schema-name">Nom du schema</label>
             <input
-              id="login-username"
-              class="login-input"
-              placeholder="Utilisateur"
-              autocomplete="username"
-              value={loginUsername}
-              on:input={(e) => (loginUsername = e.currentTarget.value)}
-              disabled={loggingIn}
+              id="schema-name"
+              class="schema-name"
+              placeholder="Nom du schema..."
+              value={schemaName}
+              on:input={handleSchemaInput}
+              disabled={!canEdit}
             />
-            <label class="visually-hidden" for="login-password">Mot de passe</label>
-            <input
-              id="login-password"
-              class="login-input"
-              type="password"
-              placeholder="Mot de passe"
-              autocomplete="current-password"
-              value={loginPassword}
-              on:input={(e) => (loginPassword = e.currentTarget.value)}
-              disabled={loggingIn}
-            />
-            <div class="login-actions">
-              <button class="btn btn-sm primary" type="submit" disabled={loggingIn}>
-                {loggingIn ? 'Connexion...' : 'Valider'}
+            <div class="schema-actions">
+              <button class="btn btn-sm primary" type="button" on:click={handleSaveSchema} disabled={saving || !canEdit}>
+                {saving ? 'Enregistrement...' : $activeSchema?.id ? 'Mettre a jour' : 'Enregistrer'}
               </button>
+              <button class="btn btn-sm" type="button" on:click={handleDuplicate} disabled={!canEdit || saving}>
+                Dupliquer
+              </button>
+            </div>
+          {:else}
+            <label class="visually-hidden" for="schema-select">Selection du schema</label>
+            <select
+              id="schema-select"
+              class="schema-name"
+              bind:value={selectedSchemaId}
+              on:change={handleSelectSchema}
+              disabled={loadingSchema || listLoading || !$savedSchemas.length}
+            >
+              <option value="">Selectionner un schema...</option>
+              {#each $savedSchemas as schema}
+                <option value={schema.id}>{schema.name}</option>
+              {/each}
+            </select>
+            <div class="schema-actions">
+              <button class="btn btn-sm" type="button" on:click={refreshList} disabled={listLoading}>
+                {listLoading ? '...' : 'Actualiser'}
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="row row-bottom">
+        <div class="status-wrap">
+          <span class="status-badge {statusVariant.tone}">{statusVariant.label}</span>
+          {#if $draftAvailable}
+            <button class="btn btn-xs btn-ghost" type="button" on:click={handleRestoreDraftClick}>
+              Restaurer
+            </button>
+          {/if}
+          {#if $mode === 'editor'}
+            <div class="history-actions">
+              <button class="btn btn-sm" type="button" on:click={handleUndo} disabled={!$undoAvailable}>Annuler</button>
+              <button class="btn btn-sm" type="button" on:click={handleRedo} disabled={!$redoAvailable}>Retablir</button>
+            </div>
+          {/if}
+          {#if !canEdit && !authLoading}
+            <span class="auth-warning">Connectez-vous pour creer ou modifier des schemas.</span>
+          {/if}
+        </div>
+
+        <div class="auth-wrap">
+          {#if authLoading}
+            <span class="auth-loading">Authentification...</span>
+          {:else if $authUser}
+            <span class="user-badge" title="Utilisateur connecte">{$authUser.username}</span>
+            <button class="btn btn-sm" type="button" on:click={handleLogout}>Se deconnecter</button>
+          {:else}
+            {#if showLogin}
+              <form class="login-form" on:submit|preventDefault={handleLogin}>
+                <label class="visually-hidden" for="login-username">Nom utilisateur</label>
+                <input
+                  id="login-username"
+                  class="login-input"
+                  placeholder="Utilisateur"
+                  autocomplete="username"
+                  value={loginUsername}
+                  on:input={(e) => (loginUsername = e.currentTarget.value)}
+                  disabled={loggingIn}
+                />
+                <label class="visually-hidden" for="login-password">Mot de passe</label>
+                <input
+                  id="login-password"
+                  class="login-input"
+                  type="password"
+                  placeholder="Mot de passe"
+                  autocomplete="current-password"
+                  value={loginPassword}
+                  on:input={(e) => (loginPassword = e.currentTarget.value)}
+                  disabled={loggingIn}
+                />
+                <div class="login-actions">
+                  <button class="btn btn-sm primary" type="submit" disabled={loggingIn}>
+                    {loggingIn ? 'Connexion...' : 'Valider'}
+                  </button>
+                  <button
+                    class="btn btn-sm"
+                    type="button"
+                    on:click={() => {
+                      showLogin = false;
+                      loginError = '';
+                      loginUsername = '';
+                      loginPassword = '';
+                    }}
+                    disabled={loggingIn}
+                  >
+                    Annuler
+                  </button>
+                </div>
+              </form>
+            {:else}
               <button
                 class="btn btn-sm"
                 type="button"
                 on:click={() => {
-                  showLogin = false;
+                  showLogin = true;
                   loginError = '';
-                  loginUsername = '';
-                  loginPassword = '';
+                  loginMessage = '';
                 }}
-                disabled={loggingIn}
               >
-                Annuler
+                Se connecter
               </button>
-            </div>
-          </form>
-        {:else}
-          <button
-            class="btn btn-sm"
-            type="button"
-            on:click={() => {
-              showLogin = true;
-              loginError = '';
-              loginMessage = '';
-            }}
-          >
-            Se connecter
-          </button>
-        {/if}
-      {/if}
-    </div>
-
-    <div class="filters-wrap">
-      <div class="search-wrap">
-        <label class="visually-hidden" for="search-input">Rechercher</label>
-        <input
-          id="search-input"
-          class="search"
-          type="search"
-          placeholder="Rechercher un noeud, un groupe ou un sous-groupe..."
-          value={searchValue}
-          on:input={handleSearchInput}
-        />
-      </div>
-      <div class="filter-line">
-        <label class="filter-label" for="group-filter">Groupe</label>
-        <select
-          id="group-filter"
-          class="filter-select"
-          value={$searchFilters.group}
-          on:change={handleGroupFilter}
-        >
-          <option value="all">Tous les groupes</option>
-          {#each groupOptions as group}
-            <option value={group}>{group}</option>
-          {/each}
-        </select>
-        <div class="filter-gammes">
-          <span class="filter-label">Gammes</span>
-          {#each gammeOptions as gamme}
-            <label class="filter-check">
-              <input
-                type="checkbox"
-                checked={($searchFilters.gammes || []).includes(gamme)}
-                on:change={() => toggleGammeFilter(gamme)}
-              />
-              {gamme}
-            </label>
-          {/each}
+            {/if}
+          {/if}
         </div>
-        <button class="btn btn-link" type="button" on:click={clearFilters} disabled={!filtersActive}>
-          Reinitialiser
-        </button>
-      </div>
-    </div>
 
-    <div class="actions-wrap">
-      <input bind:this={fileEl} type="file" hidden accept=".json,.js" on:change={handleImport} />
-      <div class="actions-grid">
-        <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit || $mode !== 'editor'}>
-          Importer
-        </button>
-        <button class="btn btn-sm" type="button" on:click={exportJSON} disabled={!canEdit || $mode !== 'editor'}>
-          Exporter JSON
-        </button>
-        <button class="btn btn-sm" type="button" on:click={resetAll}>
-          Reinitialiser
-        </button>
-        <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
-          Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
-        </button>
+        <div class="filters-wrap">
+          <div class="search-wrap">
+            <label class="visually-hidden" for="search-input">Rechercher</label>
+            <input
+              id="search-input"
+              class="search"
+              type="search"
+              placeholder="Rechercher un noeud, un groupe ou un sous-groupe..."
+              value={searchValue}
+              on:input={handleSearchInput}
+            />
+          </div>
+          <div class="filter-line">
+            <label class="filter-label" for="group-filter">Groupe</label>
+            <select
+              id="group-filter"
+              class="filter-select"
+              value={$searchFilters.group}
+              on:change={handleGroupFilter}
+            >
+              <option value="all">Tous les groupes</option>
+              {#each groupOptions as group}
+                <option value={group}>{group}</option>
+              {/each}
+            </select>
+            <div class="filter-gammes">
+              <span class="filter-label">Gammes</span>
+              {#each gammeOptions as gamme}
+                <label class="filter-check">
+                  <input
+                    type="checkbox"
+                    checked={($searchFilters.gammes || []).includes(gamme)}
+                    on:change={() => toggleGammeFilter(gamme)}
+                  />
+                  {gamme}
+                </label>
+              {/each}
+            </div>
+            <button class="btn btn-link" type="button" on:click={clearFilters} disabled={!filtersActive}>
+              Reinitialiser
+            </button>
+          </div>
+        </div>
+
+        <div class="actions-wrap">
+          <div class="actions-grid">
+            <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit || $mode !== 'editor'}>
+              Importer
+            </button>
+            <button class="btn btn-sm" type="button" on:click={exportJSON} disabled={!canEdit || $mode !== 'editor'}>
+              Exporter JSON
+            </button>
+            <button class="btn btn-sm" type="button" on:click={resetAll}>
+              Reinitialiser
+            </button>
+            <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
+              Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
+            </button>
+          </div>
+        </div>
       </div>
+      <input bind:this={fileEl} type="file" hidden accept=".json,.js" on:change={handleImport} />
     </div>
-  </div>
+  </aside>
 </div>
 {#if saveError || loadError || listError || saveMessage || loginError || loginMessage}
   <div class="status-line">
@@ -510,30 +573,115 @@
     background: var(--panel-bg, #f7f8fa);
     border-bottom:1px solid var(--border-color, #dfe3ea);
     display:flex;
-    flex-direction:column;
+    align-items:center;
+    justify-content:space-between;
     gap:12px;
+  }
+  .menu-trigger {
+    width:42px;
+    height:42px;
+    border:1px solid var(--border-color, #dfe3ea);
+    border-radius:10px;
+    background: var(--bg, #fff);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    cursor:pointer;
+    transition:background 0.2s ease;
+  }
+  .menu-trigger:hover {
+    background:rgba(37,99,235,0.08);
+  }
+  .menu-trigger span {
+    display:block;
+    width:20px;
+    height:2px;
+    background: var(--text-color, #0f172a);
+    border-radius:999px;
+    transition:transform 0.2s ease;
+  }
+  .topbar-title {
+    flex:1;
+    display:flex;
+    justify-content:flex-end;
+    font-size:14px;
+    font-weight:600;
+    color: var(--text-color, #0f172a);
+  }
+  .menu-container {
+    position:relative;
+    z-index:40;
+  }
+  .menu-backdrop {
+    position:fixed;
+    inset:0;
+    background:rgba(15,23,42,0.35);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity 0.2s ease;
+    border:none;
+  }
+  .menu-backdrop.show {
+    opacity:1;
+    pointer-events:auto;
+    cursor:pointer;
+  }
+  .menu-panel {
+    position:fixed;
+    top:0;
+    left:-440px;
+    width:min(420px, 92vw);
+    height:100vh;
+    background: var(--panel-bg, #f7f8fa);
+    border-right:1px solid var(--border-color, #dfe3ea);
+    box-shadow:0 8px 32px rgba(15,23,42,0.25);
+    padding:18px 18px 24px;
+    overflow-y:auto;
+    transition:left 0.26s ease;
+    display:flex;
+    flex-direction:column;
+    gap:18px;
+  }
+  .menu-panel.open {
+    left:0;
+  }
+  .menu-header {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+  }
+  .menu-heading {
+    font-size:16px;
+    font-weight:700;
+    color: var(--text-color, #0f172a);
+  }
+  .menu-body {
+    display:flex;
+    flex-direction:column;
+    gap:18px;
   }
   .row-top {
     display:flex;
-    align-items:center;
-    gap:16px;
-    flex-wrap:wrap;
+    flex-direction:column;
+    align-items:stretch;
+    gap:12px;
   }
   .mode-wrap {
     flex:0 0 auto;
+    display:flex;
+    justify-content:flex-start;
   }
   .schema-wrap {
-    flex:1 1 520px;
-    min-width:280px;
     display:flex;
-    align-items:center;
-    gap:12px;
-    flex-wrap:wrap;
+    flex-direction:column;
+    align-items:stretch;
+    gap:10px;
   }
   .schema-name {
-    flex:1 1 260px;
-    min-width:200px;
-    max-width:420px;
+    width:100%;
     height:32px;
     padding:6px 10px;
     border:1px solid var(--border-color, #dfe3ea);
@@ -545,13 +693,13 @@
     display:flex;
     gap:8px;
     flex-wrap:wrap;
+    justify-content:flex-start;
   }
 
   .row-bottom {
-    display:grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(220px, auto) minmax(320px, 2fr) minmax(230px, auto);
-    gap:12px 18px;
-    align-items:start;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
   }
   .status-wrap {
     display:flex;
@@ -625,7 +773,7 @@
     display:flex;
     flex-direction:column;
     gap:8px;
-    min-width:300px;
+    min-width:0;
   }
   .search {
     width:100%;
@@ -670,7 +818,7 @@
 
   .actions-wrap {
     display:flex;
-    justify-content:flex-end;
+    justify-content:flex-start;
   }
   .actions-grid {
     display:grid;
@@ -723,28 +871,16 @@
   .status-line .status.error { color:#dc2626; }
   .status-line .status.success { color:#16a34a; }
 
-  @media (max-width: 1100px) {
-    .row-bottom {
-      grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
-      grid-template-rows: auto auto;
-      grid-auto-flow:row;
-    }
-    .actions-wrap {
-      justify-content:flex-start;
-    }
-  }
-
   @media (max-width: 820px) {
-    .row-top {
-      flex-direction:column;
-      align-items:flex-start;
-    }
-    .row-bottom {
-      grid-template-columns: 1fr;
-    }
     .actions-grid {
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       max-width:none;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .menu-panel {
+      width:100vw;
     }
   }
 </style>
