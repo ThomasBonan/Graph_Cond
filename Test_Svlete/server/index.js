@@ -17,6 +17,15 @@ if (!process.env.JWT_SECRET) {
 }
 const ROLLING_SESSION = process.env.JWT_ROLLING !== 'false';
 const isProd = process.env.NODE_ENV === 'production';
+const cookieSecureEnv = process.env.JWT_COOKIE_SECURE;
+const cookieSecure =
+  cookieSecureEnv === 'true' ? true : cookieSecureEnv === 'false' ? false : isProd;
+const cookieSameSite = process.env.JWT_COOKIE_SAMESITE || 'lax';
+const cookieTtlSecondsRaw = Number(process.env.JWT_COOKIE_TTL_SECONDS);
+const cookieTtlSeconds =
+  Number.isFinite(cookieTtlSecondsRaw) && cookieTtlSecondsRaw > 0
+    ? cookieTtlSecondsRaw
+    : TOKEN_TTL_SECONDS;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -97,16 +106,16 @@ app.use(express.json({ limit: '10mb' }));
 
 const cookieOptions = {
   httpOnly: true,
-  sameSite: 'lax',
-  secure: isProd,
-  maxAge: TOKEN_TTL_SECONDS * 1000,
+  sameSite: cookieSameSite,
+  secure: cookieSecure,
+  maxAge: Math.max(60, cookieTtlSeconds) * 1000,
   path: '/'
 };
 
 const clearCookieOptions = {
   httpOnly: true,
-  sameSite: 'lax',
-  secure: isProd,
+  sameSite: cookieSameSite,
+  secure: cookieSecure,
   path: '/'
 };
 

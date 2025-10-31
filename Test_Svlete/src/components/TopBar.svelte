@@ -298,33 +298,14 @@
 </script>
 
 <div class="topbar">
-  <div class="topbar-left">
-    <button class="btn btn-sm" type="button" on:click={() => mode.set($mode === 'editor' ? 'commercial' : 'editor')}>
-      {$mode === 'editor' ? 'Commerciale' : 'Editeur'}
-    </button>
-    <div class="status-area">
-      <span class="status-badge {statusVariant.tone}">{statusVariant.label}</span>
-      {#if $draftAvailable}
-        <button class="btn btn-xs btn-ghost" type="button" on:click={handleRestoreDraftClick}>
-          Restaurer
-        </button>
-      {/if}
+  <div class="row row-top">
+    <div class="mode-wrap">
+      <button class="btn btn-sm" type="button" on:click={() => mode.set($mode === 'editor' ? 'commercial' : 'editor')}>
+        {$mode === 'editor' ? 'Commerciale' : 'Editeur'}
+      </button>
     </div>
-    {#if $mode === 'editor'}
-      <div class="history-actions">
-        <button class="btn btn-sm" type="button" on:click={handleUndo} disabled={!$undoAvailable}>
-          Annuler
-        </button>
-        <button class="btn btn-sm" type="button" on:click={handleRedo} disabled={!$redoAvailable}>
-          Retablir
-        </button>
-      </div>
-    {/if}
-  </div>
-
-  <div class="topbar-center">
-    {#if $mode === 'editor'}
-      <div class="schema-controls">
+    <div class="schema-wrap">
+      {#if $mode === 'editor'}
         <label class="visually-hidden" for="schema-name">Nom du schema</label>
         <input
           id="schema-name"
@@ -334,27 +315,19 @@
           on:input={handleSchemaInput}
           disabled={!canEdit}
         />
-        <button
-          class="btn btn-sm primary"
-          type="button"
-          on:click={handleSaveSchema}
-          disabled={saving || !canEdit}
-        >
-          {saving ? 'Enregistrement...' : $activeSchema?.id ? 'Mettre a jour' : 'Enregistrer'}
-        </button>
-        <button class="btn btn-sm" type="button" on:click={handleDuplicate} disabled={!canEdit || saving}>
-          Dupliquer
-        </button>
-      </div>
-      {#if !canEdit && !authLoading}
-        <span class="auth-warning">Connectez-vous pour creer ou modifier des schemas.</span>
-      {/if}
-    {:else}
-      <div class="schema-controls">
+        <div class="schema-actions">
+          <button class="btn btn-sm primary" type="button" on:click={handleSaveSchema} disabled={saving || !canEdit}>
+            {saving ? 'Enregistrement...' : $activeSchema?.id ? 'Mettre a jour' : 'Enregistrer'}
+          </button>
+          <button class="btn btn-sm" type="button" on:click={handleDuplicate} disabled={!canEdit || saving}>
+            Dupliquer
+          </button>
+        </div>
+      {:else}
         <label class="visually-hidden" for="schema-select">Selection du schema</label>
         <select
           id="schema-select"
-          class="schema-select"
+          class="schema-name"
           bind:value={selectedSchemaId}
           on:change={handleSelectSchema}
           disabled={loadingSchema || listLoading || !$savedSchemas.length}
@@ -364,66 +337,35 @@
             <option value={schema.id}>{schema.name}</option>
           {/each}
         </select>
-        <button
-          class="btn btn-sm"
-          type="button"
-          on:click={refreshList}
-          disabled={listLoading}
-          title="Actualiser la liste"
-          aria-label="Actualiser la liste des schemas"
-        >
-          {listLoading ? '...' : 'Actualiser'}
-        </button>
-      </div>
-    {/if}
-
-    <div class="search-area">
-      <div class="search-wrap">
-        <label class="visually-hidden" for="search-input">Rechercher</label>
-        <input
-          id="search-input"
-          class="search"
-          type="search"
-          placeholder="Rechercher un noeud, un groupe ou un sous-groupe..."
-          value={searchValue}
-          on:input={handleSearchInput}
-        />
-      </div>
-      <div class="filter-line">
-        <label class="filter-label" for="group-filter">Groupe</label>
-        <select
-          id="group-filter"
-          class="filter-select"
-          value={$searchFilters.group}
-          on:change={handleGroupFilter}
-        >
-          <option value="all">Tous les groupes</option>
-          {#each groupOptions as group}
-            <option value={group}>{group}</option>
-          {/each}
-        </select>
-        <div class="filter-gammes">
-          <span class="filter-label">Gammes</span>
-          {#each gammeOptions as gamme}
-            <label class="filter-check">
-              <input
-                type="checkbox"
-                checked={($searchFilters.gammes || []).includes(gamme)}
-                on:change={() => toggleGammeFilter(gamme)}
-              />
-              {gamme}
-            </label>
-          {/each}
+        <div class="schema-actions">
+          <button class="btn btn-sm" type="button" on:click={refreshList} disabled={listLoading}>
+            {listLoading ? '...' : 'Actualiser'}
+          </button>
         </div>
-        <button class="btn btn-link" type="button" on:click={clearFilters} disabled={!filtersActive}>
-          Reinitialiser filtres
-        </button>
-      </div>
+      {/if}
     </div>
   </div>
 
-  <div class="topbar-right">
-    <div class="auth-block">
+  <div class="row row-bottom">
+    <div class="status-wrap">
+      <span class="status-badge {statusVariant.tone}">{statusVariant.label}</span>
+      {#if $draftAvailable}
+        <button class="btn btn-xs btn-ghost" type="button" on:click={handleRestoreDraftClick}>
+          Restaurer
+        </button>
+      {/if}
+      {#if $mode === 'editor'}
+        <div class="history-actions">
+          <button class="btn btn-sm" type="button" on:click={handleUndo} disabled={!$undoAvailable}>Annuler</button>
+          <button class="btn btn-sm" type="button" on:click={handleRedo} disabled={!$redoAvailable}>Retablir</button>
+        </div>
+      {/if}
+      {#if !canEdit && !authLoading}
+        <span class="auth-warning">Connectez-vous pour creer ou modifier des schemas.</span>
+      {/if}
+    </div>
+
+    <div class="auth-wrap">
       {#if authLoading}
         <span class="auth-loading">Authentification...</span>
       {:else if $authUser}
@@ -488,15 +430,67 @@
       {/if}
     </div>
 
-    <input bind:this={fileEl} type="file" hidden accept=".json,.js" on:change={handleImport} />
-    {#if $mode === 'editor'}
-      <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit}>Importer</button>
-      <button class="btn btn-sm" type="button" on:click={exportJSON} disabled={!canEdit}>Exporter JSON</button>
-    {/if}
-    <button class="btn btn-sm" type="button" on:click={resetAll}>Reinitialiser</button>
-    <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
-      Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
-    </button>
+    <div class="filters-wrap">
+      <div class="search-wrap">
+        <label class="visually-hidden" for="search-input">Rechercher</label>
+        <input
+          id="search-input"
+          class="search"
+          type="search"
+          placeholder="Rechercher un noeud, un groupe ou un sous-groupe..."
+          value={searchValue}
+          on:input={handleSearchInput}
+        />
+      </div>
+      <div class="filter-line">
+        <label class="filter-label" for="group-filter">Groupe</label>
+        <select
+          id="group-filter"
+          class="filter-select"
+          value={$searchFilters.group}
+          on:change={handleGroupFilter}
+        >
+          <option value="all">Tous les groupes</option>
+          {#each groupOptions as group}
+            <option value={group}>{group}</option>
+          {/each}
+        </select>
+        <div class="filter-gammes">
+          <span class="filter-label">Gammes</span>
+          {#each gammeOptions as gamme}
+            <label class="filter-check">
+              <input
+                type="checkbox"
+                checked={($searchFilters.gammes || []).includes(gamme)}
+                on:change={() => toggleGammeFilter(gamme)}
+              />
+              {gamme}
+            </label>
+          {/each}
+        </div>
+        <button class="btn btn-link" type="button" on:click={clearFilters} disabled={!filtersActive}>
+          Reinitialiser
+        </button>
+      </div>
+    </div>
+
+    <div class="actions-wrap">
+      <input bind:this={fileEl} type="file" hidden accept=".json,.js" on:change={handleImport} />
+      <div class="actions-grid">
+        <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit || $mode !== 'editor'}>
+          Importer
+        </button>
+        <button class="btn btn-sm" type="button" on:click={exportJSON} disabled={!canEdit || $mode !== 'editor'}>
+          Exporter JSON
+        </button>
+        <button class="btn btn-sm" type="button" on:click={resetAll}>
+          Reinitialiser
+        </button>
+        <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
+          Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 {#if saveError || loadError || listError || saveMessage || loginError || loginMessage}
@@ -512,36 +506,57 @@
 
 <style>
   .topbar {
-    display:grid;
-    grid-template-columns: auto 1fr auto;
-    align-items:center;
-    padding:12px 14px;
-    gap:12px;
+    padding:10px 14px;
     background: var(--panel-bg, #f7f8fa);
     border-bottom:1px solid var(--border-color, #dfe3ea);
+    display:flex;
+    flex-direction:column;
+    gap:12px;
   }
-  .topbar-left,
-  .topbar-right {
+  .row-top {
     display:flex;
     align-items:center;
+    gap:16px;
+    flex-wrap:wrap;
+  }
+  .mode-wrap {
+    flex:0 0 auto;
+  }
+  .schema-wrap {
+    flex:1 1 520px;
+    min-width:280px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .schema-name {
+    flex:1 1 260px;
+    min-width:200px;
+    max-width:420px;
+    height:32px;
+    padding:6px 10px;
+    border:1px solid var(--border-color, #dfe3ea);
+    border-radius:6px;
+    background: var(--bg, #fff);
+    color: var(--text-color, #0f172a);
+  }
+  .schema-actions {
+    display:flex;
     gap:8px;
     flex-wrap:wrap;
   }
-  .topbar-right {
-    justify-content:flex-end;
+
+  .row-bottom {
+    display:grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(220px, auto) minmax(320px, 2fr) minmax(230px, auto);
+    gap:12px 18px;
+    align-items:start;
   }
-  .topbar-center {
+  .status-wrap {
     display:flex;
     flex-direction:column;
-    align-items:stretch;
-    justify-content:center;
-    gap:12px;
-  }
-  .status-area {
-    display:flex;
-    align-items:center;
-    gap:6px;
-    flex-wrap:wrap;
+    gap:8px;
   }
   .status-badge {
     display:inline-flex;
@@ -552,46 +567,80 @@
     font-size:12px;
     font-weight:600;
     letter-spacing:0.01em;
+    width:fit-content;
   }
   .status-badge.clean { background:#dcfce7; color:#166534; }
   .status-badge.draft { background:#fef3c7; color:#92400e; }
   .status-badge.dirty { background:#fee2e2; color:#b91c1c; }
-  .btn-xs { min-height:24px; padding:0 10px; font-size:11px; }
-  .btn-ghost {
-    background:transparent;
-    border-color:transparent;
-    color:#2563eb;
-  }
-  .btn-ghost:hover { background:rgba(37,99,235,0.08); }
   .history-actions {
     display:flex;
-    align-items:center;
     gap:6px;
     flex-wrap:wrap;
   }
-  .search-wrap {
-    flex:1 1 260px;
-    min-width:200px;
+  .btn-xs {
+    min-height:24px;
+    padding:0 10px;
+    font-size:11px;
   }
-  .search {
-    width:100%;
-    height: 32px;
-    padding: 6px 10px;
+  .btn-ghost {
+    background:transparent;
+    border:1px solid transparent;
+    color:#2563eb;
+  }
+  .btn-ghost:hover { background:rgba(37,99,235,0.08); }
+
+  .auth-wrap {
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    align-items:center;
+  }
+  .auth-loading { font-size:12px; color: var(--c-text-muted, #8b93a7); }
+  .login-form {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    align-items:center;
+  }
+  .login-input {
+    height:32px;
+    padding:6px 10px;
     border:1px solid var(--border-color, #dfe3ea);
     border-radius:6px;
     background: var(--bg, #fff);
     color: var(--text-color, #0f172a);
   }
-  .search-area {
+  .login-actions { display:flex; gap:6px; }
+  .user-badge {
+    background:#e0e7ff;
+    color:#1d4ed8;
+    padding:4px 10px;
+    border-radius:999px;
+    font-weight:600;
+    font-size:12px;
+  }
+  .auth-warning { color:#dc2626; font-size:12px; }
+
+  .filters-wrap {
     display:flex;
     flex-direction:column;
     gap:8px;
+    min-width:300px;
+  }
+  .search {
+    width:100%;
+    height:32px;
+    padding:6px 10px;
+    border:1px solid var(--border-color, #dfe3ea);
+    border-radius:6px;
+    background: var(--bg, #fff);
+    color: var(--text-color, #0f172a);
   }
   .filter-line {
     display:flex;
     flex-wrap:wrap;
-    align-items:center;
     gap:10px;
+    align-items:center;
   }
   .filter-label {
     font-size:12px;
@@ -607,8 +656,8 @@
   }
   .filter-gammes {
     display:flex;
-    align-items:center;
     gap:8px;
+    align-items:center;
     flex-wrap:wrap;
   }
   .filter-check {
@@ -618,38 +667,29 @@
     font-size:12px;
     color: var(--c-text-muted, #64748b);
   }
-  .filter-check input {
-    margin:0;
+
+  .actions-wrap {
+    display:flex;
+    justify-content:flex-end;
   }
+  .actions-grid {
+    display:grid;
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    gap:8px;
+    width:100%;
+    max-width:260px;
+  }
+
   .btn {
-    border:1px solid var(--border-color, #dfe3ea); border-radius:6px;
-    background: var(--bg, #fff); color: var(--text-color, #0f172a);
+    border:1px solid var(--border-color, #dfe3ea);
+    border-radius:6px;
+    background: var(--bg, #fff);
+    color: var(--text-color, #0f172a);
     cursor:pointer;
   }
   .btn-sm { min-height:32px; padding:0 12px; font-size:12px; }
   .btn.primary { background:#2563eb; color:#fff; border-color:#1d4ed8; }
   .btn[disabled] { cursor:not-allowed; opacity:.6; }
-  .schema-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .schema-name, .schema-select {
-    min-width:220px; height:32px; padding:6px 10px;
-    border:1px solid var(--border-color, #dfe3ea); border-radius:6px;
-    background: var(--bg, #fff); color: var(--text-color, #0f172a);
-  }
-  .auth-block {
-    display:flex; align-items:center; gap:6px; flex-wrap:wrap;
-  }
-  .auth-loading { font-size:12px; color: var(--c-text-muted, #8b93a7); }
-  .login-form { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .login-input {
-    height:32px; padding:6px 10px; border:1px solid var(--border-color, #dfe3ea);
-    border-radius:6px; background: var(--bg, #fff); color: var(--text-color, #0f172a);
-  }
-  .login-actions { display:flex; gap:6px; }
-  .user-badge {
-    background:#e0e7ff; color:#1d4ed8; padding:4px 10px; border-radius:999px;
-    font-weight:600; font-size:12px;
-  }
-  .auth-warning { color:#dc2626; font-size:12px; margin-top:4px; }
   .btn-link {
     border:none;
     background:transparent;
@@ -659,31 +699,52 @@
     padding:0;
   }
   .btn-link[disabled] { color: var(--c-text-muted, #8b93a7); cursor:not-allowed; }
+
   .visually-hidden {
-    position:absolute; width:1px; height:1px; padding:0; margin:-1px;
-    overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
+    position:absolute;
+    width:1px;
+    height:1px;
+    padding:0;
+    margin:-1px;
+    overflow:hidden;
+    clip:rect(0,0,0,0);
+    white-space:nowrap;
+    border:0;
   }
   .status-line {
-    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-    padding:4px 12px 8px; font-size:12px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    flex-wrap:wrap;
+    padding:4px 12px 8px;
+    font-size:12px;
     color: var(--text-color, #0f172a);
   }
   .status-line .status.error { color:#dc2626; }
   .status-line .status.success { color:#16a34a; }
 
   @media (max-width: 1100px) {
-    .topbar { grid-template-columns: 1fr; justify-items: stretch; }
-    .topbar-left, .topbar-right { justify-content: space-between; }
-    .topbar-center { order: 3; justify-content: stretch; }
-    .history-actions { width:100%; justify-content:flex-start; }
+    .row-bottom {
+      grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
+      grid-template-rows: auto auto;
+      grid-auto-flow:row;
+    }
+    .actions-wrap {
+      justify-content:flex-start;
+    }
   }
 
-  @media (max-width: 640px) {
-    .schema-controls { flex-direction: column; align-items: stretch; }
-    .schema-name, .schema-select { width: 100%; }
-    .topbar-left, .topbar-right { justify-content: center; }
-    .filter-line { flex-direction: column; align-items:flex-start; }
-    .history-actions { justify-content:center; }
-    .status-area { justify-content:center; }
+  @media (max-width: 820px) {
+    .row-top {
+      flex-direction:column;
+      align-items:flex-start;
+    }
+    .row-bottom {
+      grid-template-columns: 1fr;
+    }
+    .actions-grid {
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      max-width:none;
+    }
   }
 </style>
