@@ -1,3 +1,12 @@
+// ============================================================================
+// stores.js
+// ----------------------------------------------------------------------------
+// Centralise tous les stores Svelte utilises par le configurateur/editeur :
+// - etat UI (mode, recherche, filtres, toasts)
+// - donnees metier (schemas, regles, groupes)
+// - persistance cote API et brouillons locaux
+// Toute modification de ces stores pilotera automatiquement l'interface.
+// ============================================================================
 // src/lib/stores.js
 import { writable, get } from 'svelte/store';
 
@@ -32,7 +41,7 @@ export function setTheme(t) {
 /* =========================================
  * UI state
  * ======================================= */
-export const mode = writable('editor');     // 'editor' | 'commercial'
+export const mode = writable('editor');     // 'editor' | 'configurateur'
 export const search = writable('');
 export const collapsed = writable({});      // { [group]: { __group?:bool, [sg|__root]?:bool } }
 
@@ -634,7 +643,7 @@ export function buildPayload() {
   };
 }
 
-export function downloadJSON(filename = 'commercial.json') {
+export function downloadJSON(filename = 'configurateur.json') {
   const payload = buildPayload();
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -644,7 +653,7 @@ export function downloadJSON(filename = 'commercial.json') {
   a.click();
   URL.revokeObjectURL(url);
 }
-export function exportJSON(filename = 'commercial.json') {
+export function exportJSON(filename = 'configurateur.json') {
   return downloadJSON(filename);
 }
 
@@ -921,6 +930,7 @@ export function resetAll() {
   selected.set(new Set());
   activeSchema.set(null);
 }
+
 
 
 

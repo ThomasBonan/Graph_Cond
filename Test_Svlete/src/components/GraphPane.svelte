@@ -1,3 +1,10 @@
+<!--
+  GraphPane.svelte
+  ------------------------------
+  Se charge du rendu D3 du graphe des options et gère les résumés des règles
+  pour les deux modes. Il observe les stores et déclenche un nouveau rendu
+  dès que les données changent.
+-->
 <script>
   import { onMount } from 'svelte';
   import { renderGraph } from '../lib/d3/graph.js';

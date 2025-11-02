@@ -1,6 +1,14 @@
+<!--
+  TopBar.svelte
+  ------------------------------
+  Regroupe la navigation globale, la gestion de session et les actions liées
+  aux schémas. Ce composant orchestre les interactions majeures (import/export,
+  sauvegarde, duplication, filtrage) et se charge d’afficher l’état de l’appli
+  via le menu burger et les toasts.
+-->
 <script>
-  import { onMount } from 'svelte';
-  import {
+  import { onMount, tick } from 'svelte';
+import {
     mode,
     theme,
     toggleTheme,
@@ -12,6 +20,7 @@
     refreshSavedSchemas,
     saveSchemaToDatabase,
     loadSchemaFromDatabase,
+    deleteSchemaFromDatabase,
     search,
     editorDirty,
     draftAvailable,
@@ -29,32 +38,36 @@
     logoutUser,
     checkAuth
   } from '../lib/stores.js';
+  import { toastSuccess, toastError, toastInfo } from '../lib/toasts.js';
+  import { readmeLinks } from '../lib/readme-content.js';
 
   let fileEl;
   let schemaName = '';
   let schemaDirty = false;
   let saving = false;
-  let saveMessage = '';
-  let saveError = '';
   let listLoading = false;
-  let listError = '';
   let loadingSchema = false;
-  let loadError = '';
   let selectedSchemaId = '';
   let searchValue = '';
+  let searchInputEl;
   let showLogin = false;
   let loginUsername = '';
   let loginPassword = '';
   let canEdit = false;
   let loggingIn = false;
-  let loginError = '';
-  let loginMessage = '';
   let authLoading = true;
   let menuOpen = false;
+  let deleting = false;
 
   function chooseFile() {
     if (!fileEl) return;
     fileEl.click();
+  }
+
+  function openReadme() {
+    if (typeof window === 'undefined') return;
+    const target = readmeLinks?.readmeUrl || '/docs/app-readme.html';
+    window.open(target, '_blank', 'noopener');
   }
 
   async function handleImport(event) {
@@ -62,40 +75,39 @@
     event.currentTarget.value = '';
     if (!file) return;
     if (!canEdit) {
-      saveError = 'Connexion requise pour importer.';
-      saveMessage = '';
+      toastError('Connexion requise pour importer.');
       return;
     }
     try {
       await importJSON(file);
-      saveMessage = 'Import effectue.';
-      saveError = '';
+      toastSuccess('Import effectué.');
     } catch (err) {
-      saveError = err?.message || 'Echec import.';
-      saveMessage = '';
+      toastError(err?.message || 'Échec import.');
     }
   }
 
   function handleSchemaInput(event) {
     schemaName = event.currentTarget.value;
     schemaDirty = true;
-    saveMessage = '';
-    saveError = '';
   }
 
   async function handleSaveSchema() {
-    if (saving || !canEdit) return;
+    if (!canEdit) {
+      toastError('Connexion requise pour enregistrer.');
+      return;
+    }
+    if (saving) return;
     saving = true;
-    saveError = '';
-    saveMessage = '';
     try {
       const record = await saveSchemaToDatabase(schemaName, { id: $activeSchema?.id });
-      saveMessage = record?.status === 'created' ? 'Schema enregistre.' : 'Schema mis a jour.';
+      toastSuccess(
+        record?.status === 'created' ? 'Schéma enregistré.' : 'Schéma mis à jour.'
+      );
       schemaDirty = false;
       schemaName = record?.name || schemaName;
       await refreshList();
     } catch (err) {
-      saveError = err?.message || "Echec de l'enregistrement du schema.";
+      toastError(err?.message || "Échec de l'enregistrement du schéma.");
     } finally {
       saving = false;
     }
@@ -103,11 +115,10 @@
 
   async function refreshList() {
     listLoading = true;
-    listError = '';
     try {
       await refreshSavedSchemas();
     } catch (err) {
-      listError = err?.message || 'Echec du chargement des schemas.';
+      toastError(err?.message || 'Échec du chargement des schémas.');
     } finally {
       listLoading = false;
     }
@@ -115,18 +126,14 @@
 
   async function handleSelectSchema(event) {
     const value = event.currentTarget.value;
-    if (!value) {
-      loadError = '';
-      return;
-    }
+    if (!value) return;
     loadingSchema = true;
-    loadError = '';
     try {
       await loadSchemaFromDatabase(Number(value));
       schemaDirty = false;
       schemaName = $activeSchema?.name || schemaName;
     } catch (err) {
-      loadError = err?.message || 'Echec du chargement du schema.';
+      toastError(err?.message || 'Échec du chargement du schéma.');
     } finally {
       loadingSchema = false;
     }
@@ -150,16 +157,14 @@
     const input = window.prompt('Nom du duplicata', suggested);
     const trimmed = (input || '').trim();
     if (!trimmed) return;
-    saveError = '';
-    saveMessage = '';
     try {
       const record = await duplicateCurrentSchema(trimmed);
-      saveMessage = 'Schema duplique.';
+      toastSuccess('Schéma dupliqué.');
       schemaDirty = false;
       schemaName = record?.name || trimmed;
       await refreshList();
     } catch (err) {
-      saveError = err?.message || 'Echec de la duplication.';
+      toastError(err?.message || 'Échec de la duplication.');
     }
   }
 
@@ -173,10 +178,32 @@
     }
     const ok = restoreDraft();
     if (ok) {
-      saveMessage = 'Brouillon restaure.';
-      saveError = '';
+      toastSuccess('Brouillon restauré.');
     } else {
-      saveError = 'Impossible de restaurer le brouillon local.';
+      toastError('Impossible de restaurer le brouillon local.');
+    }
+  }
+
+  async function handleDeleteSchema() {
+    if (!canEdit || !$activeSchema?.id || deleting) return;
+    if (typeof window !== 'undefined') {
+      const confirmDelete = window.confirm(
+        `Supprimer definitivement le schema "${$activeSchema?.name || schemaName}" ?`
+      );
+      if (!confirmDelete) return;
+    }
+    deleting = true;
+    try {
+      await deleteSchemaFromDatabase($activeSchema.id);
+      toastSuccess('Schéma supprimé.');
+      schemaName = '';
+      schemaDirty = false;
+      selectedSchemaId = '';
+      await refreshList();
+    } catch (err) {
+      toastError(err?.message || 'Échec de la suppression.');
+    } finally {
+      deleting = false;
     }
   }
 
@@ -213,40 +240,61 @@
     event?.preventDefault?.();
     if (loggingIn) return;
     loggingIn = true;
-    loginError = '';
-    loginMessage = '';
     try {
       const user = await loginUser(loginUsername, loginPassword);
-      loginMessage = `Connecte en tant que ${user.username}.`;
+      toastSuccess(`Connecté en tant que ${user.username}.`);
       showLogin = false;
       loginUsername = '';
       loginPassword = '';
       await refreshList();
     } catch (err) {
-      loginError = err?.message || 'Connexion impossible.';
+      toastError(err?.message || 'Connexion impossible.');
     } finally {
       loggingIn = false;
     }
   }
 
   async function handleLogout() {
-    loginError = '';
-    loginMessage = '';
     try {
       await logoutUser();
-      loginMessage = 'Deconnecte.';
+      toastInfo('Déconnecté.');
       await refreshList();
     } catch (err) {
-      loginError = err?.message || 'Erreur lors de la deconnexion.';
+      toastError(err?.message || 'Erreur lors de la déconnexion.');
     } finally {
       showLogin = false;
     }
   }
 
   onMount(() => {
-    const handleKeyDown = (event) => {
+    const handleKeyDown = async (event) => {
+      const key = event.key ? event.key.toLowerCase() : '';
+      const isCtrl = event.ctrlKey || event.metaKey;
+
+      if (isCtrl && key === 's') {
+        event.preventDefault();
+        if ($mode === 'editor') {
+          await handleSaveSchema();
+        }
+        return;
+      }
+
+      if (isCtrl && key === 'f') {
+        event.preventDefault();
+        menuOpen = true;
+        await tick();
+        searchInputEl?.focus();
+        return;
+      }
+
       if (event.key === 'Escape') {
-        closeMenu();
+        if (showLogin) {
+          showLogin = false;
+          loginUsername = '';
+          loginPassword = '';
+        } else if (menuOpen) {
+          closeMenu();
+        }
       }
     };
     if (typeof window !== 'undefined') {
@@ -340,7 +388,7 @@
   </div>
 </div>
 
-<div class="menu-container">
+  <div class="menu-container">
   <button
     type="button"
     class="menu-backdrop"
@@ -359,10 +407,11 @@
       <button class="btn btn-sm" type="button" on:click={closeMenu}>Fermer</button>
     </div>
     <div class="menu-body">
+      <h3 class="section-title">Mode et schemas</h3>
       <div class="row row-top">
         <div class="mode-wrap">
-          <button class="btn btn-sm" type="button" on:click={() => mode.set($mode === 'editor' ? 'commercial' : 'editor')}>
-            {$mode === 'editor' ? 'Commerciale' : 'Editeur'}
+          <button class="btn btn-sm" type="button" on:click={() => mode.set($mode === 'editor' ? 'configurateur' : 'editor')}>
+            {$mode === 'editor' ? 'Configurateur' : 'Editeur'}
           </button>
         </div>
         <div class="schema-wrap">
@@ -376,19 +425,28 @@
               on:input={handleSchemaInput}
               disabled={!canEdit}
             />
-            <div class="schema-actions">
+          <div class="schema-actions primary-actions">
               <button class="btn btn-sm primary" type="button" on:click={handleSaveSchema} disabled={saving || !canEdit}>
                 {saving ? 'Enregistrement...' : $activeSchema?.id ? 'Mettre a jour' : 'Enregistrer'}
               </button>
               <button class="btn btn-sm" type="button" on:click={handleDuplicate} disabled={!canEdit || saving}>
                 Dupliquer
               </button>
+              <button
+                class="btn btn-sm danger"
+                type="button"
+                on:click={handleDeleteSchema}
+                disabled={!canEdit || !$activeSchema?.id || deleting}
+              >
+                {deleting ? 'Suppression...' : 'Supprimer'}
+              </button>
             </div>
-          {:else}
+          {/if}
+          <div class="schema-picker">
             <label class="visually-hidden" for="schema-select">Selection du schema</label>
             <select
               id="schema-select"
-              class="schema-name"
+              class="schema-dropdown"
               bind:value={selectedSchemaId}
               on:change={handleSelectSchema}
               disabled={loadingSchema || listLoading || !$savedSchemas.length}
@@ -403,10 +461,11 @@
                 {listLoading ? '...' : 'Actualiser'}
               </button>
             </div>
-          {/if}
+          </div>
         </div>
       </div>
 
+      <h3 class="section-title">Statut & historique</h3>
       <div class="row row-bottom">
         <div class="status-wrap">
           <span class="status-badge {statusVariant.tone}">{statusVariant.label}</span>
@@ -427,6 +486,7 @@
         </div>
 
         <div class="auth-wrap">
+          <h3 class="section-title">Authentification</h3>
           {#if authLoading}
             <span class="auth-loading">Authentification...</span>
           {:else if $authUser}
@@ -465,7 +525,6 @@
                     type="button"
                     on:click={() => {
                       showLogin = false;
-                      loginError = '';
                       loginUsername = '';
                       loginPassword = '';
                     }}
@@ -481,8 +540,6 @@
                 type="button"
                 on:click={() => {
                   showLogin = true;
-                  loginError = '';
-                  loginMessage = '';
                 }}
               >
                 Se connecter
@@ -492,11 +549,12 @@
         </div>
 
         <div class="filters-wrap">
+          <h3 class="section-title">Rechercher & filtrer</h3>
           <div class="search-wrap">
             <label class="visually-hidden" for="search-input">Rechercher</label>
             <input
               id="search-input"
-              class="search"
+              class="search" bind:this={searchInputEl}
               type="search"
               placeholder="Rechercher un noeud, un groupe ou un sous-groupe..."
               value={searchValue}
@@ -536,18 +594,22 @@
         </div>
 
         <div class="actions-wrap">
+          <h3 class="section-title">Autres actions</h3>
           <div class="actions-grid">
-            <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit || $mode !== 'editor'}>
-              Importer
-            </button>
-            <button class="btn btn-sm" type="button" on:click={exportJSON} disabled={!canEdit || $mode !== 'editor'}>
-              Exporter JSON
-            </button>
-            <button class="btn btn-sm" type="button" on:click={resetAll}>
-              Reinitialiser
-            </button>
-            <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
-              Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
+              <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit || $mode !== 'editor'}>
+                Importer
+              </button>
+              <button class="btn btn-sm" type="button" on:click={exportJSON} disabled={!canEdit || $mode !== 'editor'}>
+                Exporter JSON
+              </button>
+              <button class="btn btn-sm" type="button" on:click={openReadme}>
+                README
+              </button>
+              <button class="btn btn-sm" type="button" on:click={resetAll}>
+                Reinitialiser
+              </button>
+              <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
+                Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
             </button>
           </div>
         </div>
@@ -556,17 +618,6 @@
     </div>
   </aside>
 </div>
-{#if saveError || loadError || listError || saveMessage || loginError || loginMessage}
-  <div class="status-line">
-    {#if saveError}<span class="status error">{saveError}</span>{/if}
-    {#if loadError}<span class="status error">{loadError}</span>{/if}
-    {#if listError}<span class="status error">{listError}</span>{/if}
-    {#if !saveError && saveMessage}<span class="status success">{saveMessage}</span>{/if}
-    {#if loginError}<span class="status error">{loginError}</span>{/if}
-    {#if loginMessage}<span class="status success">{loginMessage}</span>{/if}
-  </div>
-{/if}
-
 <style>
   .topbar {
     padding:10px 14px;
@@ -663,6 +714,14 @@
     flex-direction:column;
     gap:18px;
   }
+  .section-title {
+    margin:0;
+    font-size:13px;
+    font-weight:700;
+    color: var(--c-text-muted, #64748b);
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+  }
   .row-top {
     display:flex;
     flex-direction:column;
@@ -694,6 +753,31 @@
     gap:8px;
     flex-wrap:wrap;
     justify-content:flex-start;
+  }
+  .schema-actions.primary-actions {
+    flex-wrap:wrap;
+  }
+  .schema-actions .danger {
+    border-color:#fca5a5;
+    color:#b91c1c;
+    background:#fee2e2;
+  }
+  .schema-actions .danger:hover {
+    background:#fecaca;
+  }
+  .schema-picker {
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .schema-dropdown {
+    width:100%;
+    height:32px;
+    padding:6px 10px;
+    border:1px solid var(--border-color, #dfe3ea);
+    border-radius:6px;
+    background: var(--bg, #fff);
+    color: var(--text-color, #0f172a);
   }
 
   .row-bottom {
@@ -859,18 +943,6 @@
     white-space:nowrap;
     border:0;
   }
-  .status-line {
-    display:flex;
-    align-items:center;
-    gap:12px;
-    flex-wrap:wrap;
-    padding:4px 12px 8px;
-    font-size:12px;
-    color: var(--text-color, #0f172a);
-  }
-  .status-line .status.error { color:#dc2626; }
-  .status-line .status.success { color:#16a34a; }
-
   @media (max-width: 820px) {
     .actions-grid {
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

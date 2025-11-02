@@ -1,3 +1,9 @@
+<!--
+  app.svelte
+  ----------------------------------------------------------------------------
+  Point d'entree UI: monte la topbar, les toasts et route entre mode editeur
+  et configurateur. Les layouts specifiques sont charges dynamiquement.
+-->
 <script>
   import { onMount } from 'svelte';
   import { mode, theme } from './lib/stores.js';
@@ -5,9 +11,11 @@
   /* UI communes */
   import TopBar from './components/TopBar.svelte';
   import GraphPane from './components/GraphPane.svelte';
+  import ToastContainer from './components/ToastContainer.svelte';
+  import HelpOverlay from './components/HelpOverlay.svelte';
 
-  /* Vue commerciale */
-  import CommercialActions from './components/CommercialActions.svelte';
+  /* Vue configurateur */
+  import ConfigurateurActions from './components/ConfigurateurActions.svelte';
   import Summary from './components/Summary.svelte';
   import ExportBar from './components/ExportBar.svelte'; // ✅ export SVG/PNG/PDF
 
@@ -36,8 +44,10 @@
   }
 </script>
 
-<!-- Topbar : Import/Export JSON + switch Commerciale/Éditeur + thème -->
+<!-- Topbar : Import/Export JSON + switch configurateur/Éditeur + thème -->
 <TopBar />
+<ToastContainer />
+<HelpOverlay />
 
 {#if $mode === 'editor'}
   <div class="toolbar" style="margin: 8px 12px 0;">
@@ -50,9 +60,9 @@
     <div class="loading"><div class="spinner" /> Chargement de l’éditeur…</div>
   {/if}
 {:else}
-  <!-- === VUE COMMERCIALE === -->
+  <!-- === VUE configurateur === -->
   <div class="layout">
-    <CommercialActions />
+    <ConfigurateurActions />
 
     <div class="mainpane">
       <!-- Outils de ligne (EXPORT GRAPHE) -->
@@ -93,7 +103,7 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ====== Mise en page commerciale avec Résumé à droite ====== */
+  /* ====== Mise en page configurateur avec Résumé à droite ====== */
   .mainpane { display: flex; flex-direction: column; min-height: 0; }
   .rowtools {
     display: flex; align-items: center; gap: 8px;
@@ -155,3 +165,10 @@
     }
   }
 </style>
+
+
+
+
+
+
+

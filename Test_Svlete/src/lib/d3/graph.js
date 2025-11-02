@@ -1,5 +1,5 @@
 // src/lib/d3/graph.js
-// - Surface identique éditeur/commerciale (le SVG prend la taille visible du conteneur)
+// - Surface identique éditeur/configurateur (le SVG prend la taille visible du conteneur)
 // - Recoloration instantanée quand le thème (data-theme) change
 // - Dépendances k/n, bords "obligatoire", tooltip, etc.
 import * as d3 from 'd3';
@@ -707,3 +707,9 @@ export function renderGraph(svgEl, ctx) {
     if (unsubscribeSelected) unsubscribeSelected();
   };
 }
+
+
+
+
+
+

@@ -1,3 +1,10 @@
+// ============================================================================
+// server/index.js
+// ----------------------------------------------------------------------------
+// Express + SQLite API servant au stockage des schemas, a l'authentification
+// et a la distribution du client. Toute logique de persistence (CRUD schemas,
+// gestion utilisateurs, tokens JWT) est centralisee ici.
+// ============================================================================
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';

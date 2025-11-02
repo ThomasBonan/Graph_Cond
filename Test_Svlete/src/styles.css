@@ -178,8 +178,8 @@ svg, svg * {
 /* 1) Toujours laisser les enfants prendre la place en flex/grille */
 .layout, .mainpane { min-width: 0; min-height: 0; }
 
-/* 2) Vue commerciale : conteneur 2 colonnes (graphe + résumé)
-      - utilise la classe .combo si elle existe déjà (vue commerciale)
+/* 2) vue configurateur : conteneur 2 colonnes (graphe + résumé)
+      - utilise la classe .combo si elle existe déjà (vue configurateur)
       - sinon, ces règles n'impactent pas l'éditeur
 */
 .combo {
@@ -226,3 +226,5 @@ svg, svg * {
   min-width: 0;
   min-height: 0;
 }
+
+
