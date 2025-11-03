@@ -45,6 +45,9 @@ import {
     createUserAccount,
     archiveSchemaInDatabase,
     openAuditPanel,
+    openSystemHealthPanel,
+    refreshSystemHealth,
+    systemHealthLoading,
     storedSelections,
     storeCurrentSelectionSnapshot,
     clearStoredSelections,
@@ -143,6 +146,15 @@ import {
       openAuditPanel($activeSchema?.id || null);
     } catch (err) {
       toastError(err?.message || "Impossible d'ouvrir les logs.");
+    }
+  }
+
+  async function handleOpenSystemHealth() {
+    try {
+      openSystemHealthPanel();
+      await refreshSystemHealth();
+    } catch (err) {
+      toastError(err?.message || 'Impossible de recuperer la sante du systeme.');
     }
   }
 
@@ -496,7 +508,7 @@ import {
   }
   $: searchValue = $search;
   $: isBootstrapUser = Boolean($authUser?.isBootstrap);
-  $: canManageUsers = Boolean($authUser?.isBootstrap) && $mode === 'editor';
+  $: canManageUsers = Boolean($authUser?.isBootstrap);
   $: if (!canManageUsers && (showCreateUser || newUserName || newUserPassword || creatingUser)) {
     cancelCreateUser();
   }
@@ -794,6 +806,14 @@ import {
               <div class="user-admin">
                 <button class="btn btn-sm" type="button" on:click={handleOpenAuditPanel}>
                   Voir les logs
+                </button>
+                <button
+                  class="btn btn-sm"
+                  type="button"
+                  on:click={handleOpenSystemHealth}
+                  disabled={$systemHealthLoading}
+                >
+                  {$systemHealthLoading ? 'Chargement...' : 'Sante systeme'}
                 </button>
                 {#if showCreateUser}
                   <form class="user-create" on:submit|preventDefault={handleCreateUserSubmit}>

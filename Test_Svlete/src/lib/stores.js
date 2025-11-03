@@ -104,6 +104,12 @@ export const auditSummaries = writable([]);
 export const auditPanelOpen = writable(false);
 export const auditSelectedSchemaId = writable(null);
 export const storedSelections = writable([]);
+export const systemHealth = writable(null);
+export const systemHealthPanelOpen = writable(false);
+export const systemHealthLoading = writable(false);
+export const systemHealthError = writable(null);
+export const systemHealthLatencyMs = writable(null);
+export const systemHealthLastUpdated = writable(null);
 
 /* ------------ Helpers internes ----------- */
 function normalizeArr(a) {
@@ -1162,6 +1168,47 @@ export function openAuditPanel(schemaId = null) {
 export function closeAuditPanel() {
   auditPanelOpen.set(false);
   auditSelectedSchemaId.set(null);
+}
+
+export function openSystemHealthPanel() {
+  const user = get(authUser);
+  if (!user?.isBootstrap) {
+    throw new Error('Acces reserve au compte bootstrap.');
+  }
+  systemHealthPanelOpen.set(true);
+}
+
+export function closeSystemHealthPanel() {
+  systemHealthPanelOpen.set(false);
+}
+
+export async function refreshSystemHealth() {
+  const user = get(authUser);
+  if (!user?.isBootstrap) {
+    throw new Error('Acces reserve au compte bootstrap.');
+  }
+  const start =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  systemHealthLoading.set(true);
+  systemHealthError.set(null);
+  try {
+    const payload = await apiFetch('/api/admin/system-health', { method: 'GET' });
+    systemHealth.set(payload);
+    systemHealthLastUpdated.set(new Date().toISOString());
+    const end =
+      typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+    systemHealthLatencyMs.set(Math.max(0, end - start));
+    return payload;
+  } catch (err) {
+    systemHealthError.set(err?.message || 'Impossible de recuperer la sante du systeme.');
+    throw err;
+  } finally {
+    systemHealthLoading.set(false);
+  }
 }
 
 /* =========================================

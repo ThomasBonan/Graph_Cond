@@ -13,6 +13,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs from 'fs/promises';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const PORT = process.env.PORT || 3000;
@@ -254,6 +255,157 @@ function recordSchemaAudit({ schemaId, name, action, actor, extra = null }) {
   }
 }
 
+async function computeDirectoryStats(rootDir) {
+  const summary = { bytes: 0, fileCount: 0, dirCount: 0 };
+  const stack = [rootDir];
+  const visited = new Set();
+
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    let entries;
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isSymbolicLink?.()) continue;
+      if (entry.isDirectory()) {
+        summary.dirCount += 1;
+        stack.push(fullPath);
+        continue;
+      }
+      try {
+        const stat = await fs.stat(fullPath);
+        summary.fileCount += 1;
+        summary.bytes += Number(stat.size || 0);
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return summary;
+}
+
+async function getFilesystemInfo(targetDir) {
+  const statfsFn = fs.statfs;
+  if (typeof statfsFn !== 'function') {
+    return null;
+  }
+  try {
+    const info = await statfsFn(targetDir);
+    const blockSize = Number(info?.bsize || 0);
+    const blocks = Number(info?.blocks || 0);
+    const freeBlocks = Number(info?.bfree || 0);
+    const availBlocks = Number(info?.bavail || 0);
+    const totalBytes = Number.isFinite(blockSize * blocks) ? blockSize * blocks : null;
+    const freeBytes = Number.isFinite(blockSize * freeBlocks) ? blockSize * freeBlocks : null;
+    const availableBytes = Number.isFinite(blockSize * availBlocks) ? blockSize * availBlocks : null;
+    const usedBytes =
+      totalBytes != null && freeBytes != null ? Math.max(totalBytes - freeBytes, 0) : null;
+    return {
+      blockSize,
+      totalBytes,
+      freeBytes,
+      availableBytes,
+      usedBytes,
+      files: typeof info.files === 'number' ? info.files : null,
+      freeFiles: typeof info.ffree === 'number' ? info.ffree : null
+    };
+  } catch (err) {
+    console.warn('[health] statfs indisponible', err?.message || err);
+    return null;
+  }
+}
+
+async function collectSystemHealthSnapshot() {
+  const hrStart =
+    typeof process.hrtime?.bigint === 'function' ? process.hrtime.bigint() : null;
+
+  let dbStats = null;
+  try {
+    dbStats = await fs.stat(dbFile);
+  } catch (err) {
+    console.warn('[health] impossible de lire la taille de la base', err?.message || err);
+  }
+
+  let directoryStats = null;
+  try {
+    directoryStats = await computeDirectoryStats(dataDir);
+  } catch (err) {
+    console.warn("[health] impossible d'inspecter le dossier data", err?.message || err);
+  }
+
+  const fsInfo = await getFilesystemInfo(dataDir);
+
+  const pageSize = Number(db.pragma('page_size', { simple: true }) || 0);
+  const pageCount = Number(db.pragma('page_count', { simple: true }) || 0);
+
+  const memory = process.memoryUsage();
+  const cpuInfo = typeof os.cpus === 'function' ? os.cpus() : null;
+  const loadAverage = typeof os.loadavg === 'function' ? os.loadavg() : [];
+
+  const snapshot = {
+    serverTime: new Date().toISOString(),
+    uptimeSeconds: process.uptime(),
+    process: {
+      pid: process.pid,
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      memory: {
+        rss: memory.rss ?? null,
+        heapTotal: memory.heapTotal ?? null,
+        heapUsed: memory.heapUsed ?? null,
+        external: memory.external ?? null,
+        arrayBuffers: memory.arrayBuffers ?? null
+      }
+    },
+    cpu: {
+      cores: Array.isArray(cpuInfo) ? cpuInfo.length : null,
+      loadAverage: Array.isArray(loadAverage) ? loadAverage : []
+    },
+    database: {
+      path: dbFile,
+      sizeBytes: dbStats?.size ?? null,
+      modifiedAt: dbStats?.mtime ? new Date(dbStats.mtime).toISOString() : null,
+      pageSize,
+      pageCount,
+      approxSizeBytes:
+        pageSize && pageCount ? Number(pageSize) * Number(pageCount) : null
+    },
+    storage: {
+      dataDir,
+      blockSize: fsInfo?.blockSize ?? null,
+      totalBytes: fsInfo?.totalBytes ?? null,
+      freeBytes: fsInfo?.freeBytes ?? null,
+      availableBytes: fsInfo?.availableBytes ?? null,
+      usedBytes: fsInfo?.usedBytes ?? null,
+      files: directoryStats?.fileCount ?? null,
+      directories: directoryStats?.dirCount ?? null,
+      contentBytes: directoryStats?.bytes ?? null
+    },
+    paths: {
+      projectRoot,
+      dataDir,
+      dbFile
+    }
+  };
+
+  if (hrStart) {
+    const diff = process.hrtime.bigint() - hrStart;
+    snapshot.serverProcessingMs = Number(diff / BigInt(1_000_000));
+  } else {
+    snapshot.serverProcessingMs = null;
+  }
+
+  return snapshot;
+}
+
 function attachUser(req, res, next) {
   const token = req.cookies?.auth_token;
   if (!token) {
@@ -436,6 +588,20 @@ app.get(`${API_PREFIX}/schemas/:id/audit`, requireAuth, (req, res) => {
     extra: entry.extra ? JSON.parse(entry.extra) : null
   }));
   res.json({ events });
+});
+
+app.get(`${API_PREFIX}/admin/system-health`, requireAuth, async (req, res) => {
+  if (!isBootstrapUserAccount(req.user)) {
+    res.status(403).json({ error: 'Acces reserve au compte bootstrap' });
+    return;
+  }
+  try {
+    const payload = await collectSystemHealthSnapshot();
+    res.json(payload);
+  } catch (err) {
+    console.error('[health] echec recuperation', err);
+    res.status(500).json({ error: 'Impossible de recuperer la sante du systeme' });
+  }
 });
 
 app.post(`${API_PREFIX}/schemas`, requireAuth, (req, res) => {

@@ -14,6 +14,7 @@
   import ToastContainer from './components/ToastContainer.svelte';
   import HelpOverlay from './components/HelpOverlay.svelte';
   import AuditPanel from './components/AuditPanel.svelte';
+  import SystemHealthPanel from './components/SystemHealthPanel.svelte';
 
   /* Vue configurateur */
   import ConfigurateurActions from './components/ConfigurateurActions.svelte';
@@ -50,6 +51,7 @@
 <ToastContainer />
 <HelpOverlay />
 <AuditPanel />
+<SystemHealthPanel />
 
 {#if $mode === 'editor'}
   <div class="toolbar" style="margin: 8px 12px 0;">
