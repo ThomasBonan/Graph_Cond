@@ -72,6 +72,8 @@ export const undoAvailable = writable(false);
 export const redoAvailable = writable(false);
 export const searchFilters = writable({ group: 'all', gammes: [] });
 export const archivedSchemas = writable([]);
+export const auditPanelOpen = writable(false);
+export const auditSelectedSchemaId = writable(null);
 
 /* ------------ Helpers internes ----------- */
 function normalizeArr(a) {
@@ -958,6 +960,20 @@ export async function fetchSchemaAudit(id) {
     }
     throw err;
   }
+}
+
+export function openAuditPanel(schemaId = null) {
+  const user = get(authUser);
+  if (!user?.isBootstrap) {
+    throw new Error('Acces reserve au compte bootstrap.');
+  }
+  auditSelectedSchemaId.set(schemaId);
+  auditPanelOpen.set(true);
+}
+
+export function closeAuditPanel() {
+  auditPanelOpen.set(false);
+  auditSelectedSchemaId.set(null);
 }
 
 /* =========================================

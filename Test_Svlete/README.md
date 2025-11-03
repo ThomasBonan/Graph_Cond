@@ -51,6 +51,7 @@ Utilisation
   - Nommer le schema puis cliquer sur `Enregistrer` ou `Mettre a jour`.
   - `Dupliquer` cree une copie pour iterer rapidement.
   - `Archiver` retire un schema de la liste principale tout en le laissant restaurable depuis la section "Schemas archives".
+  - Le bouton `Voir les logs` (compte bootstrap) ouvre l audit et liste toutes les operations.
   - `Supprimer` retire un schema existant (confirmation demandee).
   - Undo/Redo disponibles tant que la session reste ouverte.
   - Un brouillon local est sauvegarde automatiquement et restaurable via `Restaurer`.

@@ -39,7 +39,8 @@ import {
     logoutUser,
     checkAuth,
     createUserAccount,
-    archiveSchemaInDatabase
+    archiveSchemaInDatabase,
+    openAuditPanel
   } from '../lib/stores.js';
   import { toastSuccess, toastError, toastInfo } from '../lib/toasts.js';
   import { readmeLinks } from '../lib/readme-content.js';
@@ -108,10 +109,19 @@ import {
       await createUserAccount(username, password);
       toastSuccess(`Utilisateur "${username}" cree.`);
       resetCreateUserForm();
+  } catch (err) {
+    toastError(err?.message || 'Creation utilisateur impossible.');
+  } finally {
+    creatingUser = false;
+  }
+}
+
+  async function handleOpenAuditPanel() {
+    try {
+      await refreshList();
+      openAuditPanel($activeSchema?.id || null);
     } catch (err) {
-      toastError(err?.message || 'Creation utilisateur impossible.');
-    } finally {
-      creatingUser = false;
+      toastError(err?.message || 'Impossible d ouvrir les logs.');
     }
   }
 
@@ -648,6 +658,9 @@ import {
             <button class="btn btn-sm" type="button" on:click={handleLogout}>Se deconnecter</button>
             {#if canManageUsers}
               <div class="user-admin">
+                <button class="btn btn-sm" type="button" on:click={handleOpenAuditPanel}>
+                  Voir les logs
+                </button>
                 {#if showCreateUser}
                   <form class="user-create" on:submit|preventDefault={handleCreateUserSubmit}>
                     <label class="visually-hidden" for="new-user-name">Nom utilisateur</label>

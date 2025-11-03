@@ -18,6 +18,7 @@ export const readmeSections = [
       'Connexion requise pour creer, mettre a jour ou supprimer un schema',
       'Nommer le schema puis utiliser Enregistrer ou Mettre a jour',
       'Archiver pour masquer un schema de la liste principale puis le restaurer a la demande',
+      'Le bouton Voir les logs (compte bootstrap) ouvre l audit des operations du schema',
       'Dupliquer pour iterer sur une base existante; Supprimer pour retirer le schema courant',
       'Undo/Redo disponibles tant que la session reste ouverte; Restaurer recupere un brouillon local'
     ]
