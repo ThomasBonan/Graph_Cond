@@ -771,6 +771,32 @@ export async function logoutUser() {
   }
 }
 
+export async function createUserAccount(username, password) {
+  const current = get(authUser);
+  if (!current?.isBootstrap) {
+    throw new Error('Seul le compte bootstrap peut creer un utilisateur.');
+  }
+  const payload = {
+    username: String(username || '').trim(),
+    password: String(password || '')
+  };
+  if (!payload.username || !payload.password) {
+    throw new Error('Nom utilisateur et mot de passe requis.');
+  }
+  try {
+    const data = await apiFetch('/api/auth/users', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    return data?.user || null;
+  } catch (err) {
+    if (err?.status === 403) {
+      throw new Error('Seul le compte bootstrap peut creer un utilisateur.');
+    }
+    throw err;
+  }
+}
+
 export async function refreshSavedSchemas() {
   try {
     const data = await apiFetch('/api/schemas');

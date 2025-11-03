@@ -36,7 +36,8 @@ import {
     authStatus,
     loginUser,
     logoutUser,
-    checkAuth
+    checkAuth,
+    createUserAccount
   } from '../lib/stores.js';
   import { toastSuccess, toastError, toastInfo } from '../lib/toasts.js';
   import { readmeLinks } from '../lib/readme-content.js';
@@ -58,6 +59,10 @@ import {
   let authLoading = true;
   let menuOpen = false;
   let deleting = false;
+  let showCreateUser = false;
+  let newUserName = '';
+  let newUserPassword = '';
+  let creatingUser = false;
 
   function chooseFile() {
     if (!fileEl) return;
@@ -68,6 +73,42 @@ import {
     if (typeof window === 'undefined') return;
     const target = readmeLinks?.readmeUrl || '/docs/app-readme.html';
     window.open(target, '_blank', 'noopener');
+  }
+
+  function resetCreateUserForm() {
+    showCreateUser = false;
+    newUserName = '';
+    newUserPassword = '';
+  }
+
+  function cancelCreateUser() {
+    creatingUser = false;
+    resetCreateUserForm();
+  }
+
+  async function handleCreateUserSubmit(event) {
+    event?.preventDefault?.();
+    if (creatingUser) return;
+    const username = (newUserName || '').trim();
+    const password = newUserPassword || '';
+    if (!username || !password) {
+      toastError('Nom utilisateur et mot de passe requis.');
+      return;
+    }
+    if (password.length < 6) {
+      toastError('Le mot de passe doit contenir au moins 6 caracteres.');
+      return;
+    }
+    creatingUser = true;
+    try {
+      await createUserAccount(username, password);
+      toastSuccess(`Utilisateur "${username}" cree.`);
+      resetCreateUserForm();
+    } catch (err) {
+      toastError(err?.message || 'Creation utilisateur impossible.');
+    } finally {
+      creatingUser = false;
+    }
   }
 
   async function handleImport(event) {
@@ -231,9 +272,13 @@ import {
 
   function toggleMenu() {
     menuOpen = !menuOpen;
+    if (!menuOpen) {
+      cancelCreateUser();
+    }
   }
   function closeMenu() {
     menuOpen = false;
+    cancelCreateUser();
   }
 
   async function handleLogin(event) {
@@ -263,6 +308,8 @@ import {
       toastError(err?.message || 'Erreur lors de la déconnexion.');
     } finally {
       showLogin = false;
+      resetCreateUserForm();
+      creatingUser = false;
     }
   }
 
@@ -337,6 +384,10 @@ import {
     showLogin = false;
   }
   $: searchValue = $search;
+  $: canManageUsers = Boolean($authUser?.isBootstrap) && $mode === 'editor';
+  $: if (!canManageUsers && (showCreateUser || newUserName || newUserPassword || creatingUser)) {
+    cancelCreateUser();
+  }
 
   const gammeOptions = ['Smart', 'Mod', 'Evo'];
   $: groupOptions = Object.keys($grouped || {}).sort((a, b) =>
@@ -492,6 +543,50 @@ import {
           {:else if $authUser}
             <span class="user-badge" title="Utilisateur connecte">{$authUser.username}</span>
             <button class="btn btn-sm" type="button" on:click={handleLogout}>Se deconnecter</button>
+            {#if canManageUsers}
+              <div class="user-admin">
+                {#if showCreateUser}
+                  <form class="user-create" on:submit|preventDefault={handleCreateUserSubmit}>
+                    <label class="visually-hidden" for="new-user-name">Nom utilisateur</label>
+                    <input
+                      id="new-user-name"
+                      class="login-input"
+                      placeholder="Nouvel utilisateur"
+                      autocomplete="off"
+                      bind:value={newUserName}
+                      disabled={creatingUser}
+                    />
+                    <label class="visually-hidden" for="new-user-password">Mot de passe</label>
+                    <input
+                      id="new-user-password"
+                      class="login-input"
+                      type="password"
+                      placeholder="Mot de passe (min 6)"
+                      autocomplete="new-password"
+                      bind:value={newUserPassword}
+                      disabled={creatingUser}
+                    />
+                    <div class="user-create-actions">
+                      <button class="btn btn-sm primary" type="submit" disabled={creatingUser}>
+                        {creatingUser ? 'Creation...' : 'Creer'}
+                      </button>
+                      <button
+                        class="btn btn-sm"
+                        type="button"
+                        on:click={cancelCreateUser}
+                        disabled={creatingUser}
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </form>
+                {:else}
+                  <button class="btn btn-sm" type="button" on:click={() => (showCreateUser = true)}>
+                    Creer un utilisateur
+                  </button>
+                {/if}
+              </div>
+            {/if}
           {:else}
             {#if showLogin}
               <form class="login-form" on:submit|preventDefault={handleLogin}>
@@ -843,6 +938,14 @@ import {
     color: var(--text-color, #0f172a);
   }
   .login-actions { display:flex; gap:6px; }
+  .user-admin { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .user-create {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    align-items:flex-end;
+  }
+  .user-create-actions { display:flex; gap:6px; }
   .user-badge {
     background:#e0e7ff;
     color:#1d4ed8;

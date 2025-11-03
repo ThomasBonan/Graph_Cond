@@ -130,15 +130,25 @@ function normalizeName(name) {
   return String(name || '').trim();
 }
 
+const bootstrapUsername = normalizeName(process.env.BOOTSTRAP_USERNAME);
+const bootstrapUsernameLC = bootstrapUsername ? bootstrapUsername.toLowerCase() : null;
+
+function isBootstrapUserAccount(user) {
+  if (!bootstrapUsernameLC) return false;
+  const candidate = normalizeName(user?.username);
+  if (!candidate) return false;
+  return candidate.toLowerCase() === bootstrapUsernameLC;
+}
+
 async function ensureBootstrapUser() {
-  const usernameEnv = process.env.BOOTSTRAP_USERNAME;
+  const usernameEnv = bootstrapUsername;
   const passwordEnv = process.env.BOOTSTRAP_PASSWORD;
   if (!usernameEnv && !passwordEnv) return;
   if (!usernameEnv || !passwordEnv) {
     console.warn('[auth] BOOTSTRAP_USERNAME et BOOTSTRAP_PASSWORD doivent etre definis ensemble.');
     return;
   }
-  const username = normalizeName(usernameEnv);
+  const username = usernameEnv;
   const password = String(passwordEnv);
   if (!username) {
     console.warn('[auth] BOOTSTRAP_USERNAME est vide apres normalisation. Aucun utilisateur cree.');
@@ -178,6 +188,16 @@ function signToken(user) {
   );
 }
 
+function toSafeUserPayload(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    username: user.username,
+    created_at: user.created_at,
+    isBootstrap: isBootstrapUserAccount(user)
+  };
+}
+
 function attachUser(req, res, next) {
   const token = req.cookies?.auth_token;
   if (!token) {
@@ -192,9 +212,10 @@ function attachUser(req, res, next) {
       req.user = null;
       return next();
     }
-    req.user = user;
+    const safeUser = toSafeUserPayload(user);
+    req.user = safeUser;
     if (ROLLING_SESSION) {
-      res.cookie('auth_token', signToken(user), cookieOptions);
+      res.cookie('auth_token', signToken(safeUser), cookieOptions);
     }
     return next();
   } catch (err) {
@@ -238,7 +259,7 @@ app.post(`${API_PREFIX}/auth/login`, async (req, res) => {
     return;
   }
 
-  const user = { id: record.id, username: record.username };
+  const user = toSafeUserPayload(record);
   const token = signToken(user);
   res.cookie('auth_token', token, cookieOptions);
   res.json({ user });
@@ -251,6 +272,10 @@ app.post(`${API_PREFIX}/auth/logout`, (req, res) => {
 
 
 app.post(`${API_PREFIX}/auth/users`, requireAuth, async (req, res) => {
+  if (!isBootstrapUserAccount(req.user)) {
+    res.status(403).json({ error: 'Seul le compte bootstrap peut creer des utilisateurs.' });
+    return;
+  }
   const { username, password } = req.body || {};
   const trimmed = normalizeName(username);
   const passwordInput = String(password || '');
