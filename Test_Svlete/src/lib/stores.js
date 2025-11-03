@@ -20,6 +20,9 @@ const initialTheme =
 
 export const theme = writable(initialTheme);
 
+const initialRgbMode =
+  typeof localStorage !== 'undefined' && localStorage.getItem('rgb-mode') === '1';
+
 function applyTheme(t) {
   if (typeof document !== 'undefined') {
     document.documentElement.setAttribute('data-theme', t);
@@ -28,6 +31,14 @@ function applyTheme(t) {
     try { localStorage.setItem('theme', t); } catch {}
   }
 }
+
+function applyRgbModeClass(active) {
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('rgb-mode', Boolean(active));
+  }
+}
+
+applyRgbModeClass(initialRgbMode);
 applyTheme(initialTheme);
 theme.subscribe(applyTheme);
 
@@ -36,6 +47,23 @@ export function toggleTheme() {
 }
 export function setTheme(t) {
   theme.set(t === 'dark' ? 'dark' : 'light');
+}
+
+export const rgbMode = writable(initialRgbMode);
+
+rgbMode.subscribe((value) => {
+  applyRgbModeClass(value);
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.setItem('rgb-mode', value ? '1' : '0'); } catch {}
+  }
+});
+
+export function toggleRgbMode() {
+  rgbMode.update((value) => !value);
+}
+
+export function setRgbMode(value) {
+  rgbMode.set(Boolean(value));
 }
 
 /* =========================================

@@ -227,4 +227,69 @@ svg, svg * {
   min-height: 0;
 }
 
+/* ==========================================================
+   Mode RGB (compte bootstrap uniquement)
+   ========================================================== */
+@keyframes rgb-flow {
+  0% {
+    background-position: 0% 50%;
+    filter: hue-rotate(0deg);
+  }
+  25% {
+    background-position: 50% 0%;
+    filter: hue-rotate(90deg);
+  }
+  50% {
+    background-position: 100% 50%;
+    filter: hue-rotate(180deg);
+  }
+  75% {
+    background-position: 50% 100%;
+    filter: hue-rotate(270deg);
+  }
+  100% {
+    background-position: 0% 50%;
+    filter: hue-rotate(360deg);
+  }
+}
+
+:root.rgb-mode .btn,
+:root.rgb-mode .menu-trigger {
+  background: linear-gradient(120deg, #ff00aa, #00c6ff, #ffd400, #ff6f00, #8a2be2) !important;
+  background-size: 400% 400% !important;
+  animation: rgb-flow 8s ease infinite !important;
+  background-repeat: no-repeat !important;
+  color: #fff !important;
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.25);
+  transition: transform 0.2s ease;
+  will-change: background-position, filter;
+}
+
+:root.rgb-mode .btn:disabled,
+:root.rgb-mode .menu-trigger:disabled {
+  filter: grayscale(0.4);
+  opacity: 0.7;
+}
+
+:root.rgb-mode .btn:hover,
+:root.rgb-mode .menu-trigger:hover {
+  transform: translateY(-1px);
+}
+
+:root.rgb-mode .menu-trigger span {
+  background: #fff !important;
+}
+
+:root.rgb-mode .menu-backdrop {
+  background: rgba(15, 23, 42, 0.45) !important;
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root.rgb-mode .btn,
+  :root.rgb-mode .menu-trigger {
+    animation: none;
+  }
+}
 

@@ -12,6 +12,8 @@ import {
     mode,
     theme,
     toggleTheme,
+    rgbMode,
+    toggleRgbMode,
     importJSON,
     exportJSON,
     resetAll,
@@ -74,6 +76,12 @@ import {
   let creatingUser = false;
   let archivingActive = false;
   let restoringId = null;
+
+  function handleToggleRgbMode() {
+    const next = !$rgbMode;
+    toggleRgbMode();
+    toastInfo(next ? 'Mode RGB active.' : 'Mode RGB desactive.');
+  }
 
   function chooseFile() {
     if (!fileEl) return;
@@ -487,6 +495,7 @@ import {
     showLogin = false;
   }
   $: searchValue = $search;
+  $: isBootstrapUser = Boolean($authUser?.isBootstrap);
   $: canManageUsers = Boolean($authUser?.isBootstrap) && $mode === 'editor';
   $: if (!canManageUsers && (showCreateUser || newUserName || newUserPassword || creatingUser)) {
     cancelCreateUser();
@@ -774,6 +783,13 @@ import {
               <span class="user-badge" title="Utilisateur connecte">{$authUser.username}</span>
               <button class="btn btn-sm" type="button" on:click={handleLogout}>Se deconnecter</button>
             </div>
+            {#if isBootstrapUser}
+              <div class="rgb-toggle">
+                <button class="btn btn-sm" type="button" on:click={handleToggleRgbMode}>
+                  {$rgbMode ? 'Desactiver le mode RGB' : 'Activer le mode RGB'}
+                </button>
+              </div>
+            {/if}
             {#if canManageUsers}
               <div class="user-admin">
                 <button class="btn btn-sm" type="button" on:click={handleOpenAuditPanel}>
@@ -1153,6 +1169,8 @@ import {
     align-items:center;
     gap:10px;
   }
+  .rgb-toggle { margin-top:8px; }
+  .rgb-toggle .btn { width:100%; }
   .user-admin { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
   .user-create {
     display:flex;
