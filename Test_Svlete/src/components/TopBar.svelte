@@ -16,6 +16,7 @@ import {
     exportJSON,
     resetAll,
     savedSchemas,
+    archivedSchemas,
     activeSchema,
     refreshSavedSchemas,
     saveSchemaToDatabase,
@@ -37,7 +38,8 @@ import {
     loginUser,
     logoutUser,
     checkAuth,
-    createUserAccount
+    createUserAccount,
+    archiveSchemaInDatabase
   } from '../lib/stores.js';
   import { toastSuccess, toastError, toastInfo } from '../lib/toasts.js';
   import { readmeLinks } from '../lib/readme-content.js';
@@ -63,6 +65,8 @@ import {
   let newUserName = '';
   let newUserPassword = '';
   let creatingUser = false;
+  let archivingActive = false;
+  let restoringId = null;
 
   function chooseFile() {
     if (!fileEl) return;
@@ -140,7 +144,10 @@ import {
     if (saving) return;
     saving = true;
     try {
-      const record = await saveSchemaToDatabase(schemaName, { id: $activeSchema?.id });
+      const record = await saveSchemaToDatabase(schemaName, {
+        id: $activeSchema?.id,
+        archived: $activeSchema?.archived
+      });
       toastSuccess(
         record?.status === 'created' ? 'Schéma enregistré.' : 'Schéma mis à jour.'
       );
@@ -157,7 +164,7 @@ import {
   async function refreshList() {
     listLoading = true;
     try {
-      await refreshSavedSchemas();
+      await refreshSavedSchemas({ includeArchived: true });
     } catch (err) {
       toastError(err?.message || 'Échec du chargement des schémas.');
     } finally {
@@ -245,6 +252,56 @@ import {
       toastError(err?.message || 'Échec de la suppression.');
     } finally {
       deleting = false;
+    }
+  }
+
+  async function handleArchiveActive() {
+    if (!canEdit || !$activeSchema?.id || archivingActive) return;
+    const targetId = $activeSchema.id;
+    const nextState = !$activeSchema.archived;
+    archivingActive = true;
+    try {
+      await archiveSchemaInDatabase(targetId, nextState);
+      toastSuccess(nextState ? 'SchǸma archivǸ.' : 'SchǸma restaure.');
+      if (nextState) {
+        selectedSchemaId = '';
+      }
+      await refreshList();
+    } catch (err) {
+      toastError(
+        err?.message || (nextState ? 'Archivage impossible.' : 'Restauration impossible.')
+      );
+    } finally {
+      archivingActive = false;
+    }
+  }
+
+  async function handleRestoreSchema(schema) {
+    if (!canEdit || !schema?.id || restoringId === schema.id) return;
+    restoringId = schema.id;
+    try {
+      await archiveSchemaInDatabase(schema.id, false);
+      toastSuccess(`SchǸma "${schema.name}" restaure.`);
+      await refreshList();
+    } catch (err) {
+      toastError(err?.message || 'Restauration impossible.');
+    } finally {
+      restoringId = null;
+    }
+  }
+
+  async function handleLoadArchived(schema) {
+    if (!schema?.id) return;
+    loadingSchema = true;
+    try {
+      await loadSchemaFromDatabase(Number(schema.id));
+      schemaDirty = false;
+      schemaName = $activeSchema?.name || schemaName;
+      toastInfo(`Schema "${schema.name}" charge (archive).`);
+    } catch (err) {
+      toastError(err?.message || 'Chargement du schema archive impossible.');
+    } finally {
+      loadingSchema = false;
     }
   }
 
@@ -395,18 +452,20 @@ import {
   );
   $: filtersActive =
     $searchFilters.group !== 'all' || ($searchFilters.gammes || []).length > 0;
-  $: statusVariant = $editorDirty
-    ? { label: 'Brouillon en cours', tone: 'dirty' }
-    : $draftAvailable
-      ? { label: 'Brouillon local', tone: 'draft' }
-      : { label: 'Synchronise', tone: 'clean' };
+  $: statusVariant = $activeSchema?.archived
+    ? { label: 'Archive', tone: 'archived' }
+    : $editorDirty
+      ? { label: 'Brouillon en cours', tone: 'dirty' }
+      : $draftAvailable
+        ? { label: 'Brouillon local', tone: 'draft' }
+        : { label: 'Synchronise', tone: 'clean' };
 
   let lastActiveId = null;
   $: {
     const currentId = $activeSchema?.id ?? null;
     if (currentId !== lastActiveId) {
       if (currentId) {
-        selectedSchemaId = String(currentId);
+        selectedSchemaId = $activeSchema?.archived ? '' : String(currentId);
         if (!schemaDirty && $mode === 'editor') {
           schemaName = $activeSchema?.name || '';
         }
@@ -484,6 +543,20 @@ import {
                 Dupliquer
               </button>
               <button
+                class="btn btn-sm"
+                type="button"
+                on:click={handleArchiveActive}
+                disabled={!canEdit || !$activeSchema?.id || archivingActive}
+              >
+                {archivingActive
+                  ? $activeSchema?.archived
+                    ? 'Restauration...'
+                    : 'Archivage...'
+                  : $activeSchema?.archived
+                    ? 'Restaurer'
+                    : 'Archiver'}
+              </button>
+              <button
                 class="btn btn-sm danger"
                 type="button"
                 on:click={handleDeleteSchema}
@@ -513,6 +586,36 @@ import {
               </button>
             </div>
           </div>
+          {#if $mode === 'editor' && $archivedSchemas.length}
+            <div class="archived-section">
+              <p class="archived-title">Schemas archives ({$archivedSchemas.length})</p>
+              <ul class="archived-list">
+                {#each $archivedSchemas as archived}
+                  <li class="archived-item">
+                    <span class="archived-name">{archived.name}</span>
+                    <div class="archived-actions">
+                      <button
+                        class="btn btn-sm"
+                        type="button"
+                        on:click={() => handleLoadArchived(archived)}
+                        disabled={loadingSchema}
+                      >
+                        Ouvrir
+                      </button>
+                      <button
+                        class="btn btn-sm primary"
+                        type="button"
+                        on:click={() => handleRestoreSchema(archived)}
+                        disabled={!canEdit || restoringId === archived.id}
+                      >
+                        {restoringId === archived.id ? 'Restauration...' : 'Restaurer'}
+                      </button>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -865,6 +968,44 @@ import {
     flex-direction:column;
     gap:10px;
   }
+  .archived-section {
+    margin-top:6px;
+    padding:8px;
+    border:1px dashed var(--border-color, #dfe3ea);
+    border-radius:8px;
+    background: var(--panel-bg, #f7f8fa);
+  }
+  .archived-title {
+    margin:0 0 6px;
+    font-size:12px;
+    font-weight:600;
+    color: var(--c-text-muted, #64748b);
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+  .archived-list {
+    list-style:none;
+    margin:0;
+    padding:0;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .archived-item {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+  }
+  .archived-name {
+    flex:1;
+    font-size:13px;
+    color: var(--c-text-muted, #64748b);
+  }
+  .archived-actions {
+    display:flex;
+    gap:6px;
+  }
   .schema-dropdown {
     width:100%;
     height:32px;
@@ -899,6 +1040,7 @@ import {
   .status-badge.clean { background:#dcfce7; color:#166534; }
   .status-badge.draft { background:#fef3c7; color:#92400e; }
   .status-badge.dirty { background:#fee2e2; color:#b91c1c; }
+  .status-badge.archived { background:#e2e8f0; color:#334155; }
   .history-actions {
     display:flex;
     gap:6px;

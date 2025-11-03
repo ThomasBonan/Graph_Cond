@@ -68,25 +68,55 @@ db.prepare(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     payload TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )
 `).run();
 
+try {
+  db.prepare('ALTER TABLE schemas ADD COLUMN archived INTEGER NOT NULL DEFAULT 0').run();
+} catch (err) {
+  if (!String(err.message || '').includes('duplicate column name')) {
+    throw err;
+  }
+}
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS schema_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    schema_id INTEGER,
+    name TEXT,
+    action TEXT NOT NULL,
+    actor TEXT,
+    created_at TEXT NOT NULL,
+    extra TEXT
+  )
+`).run();
+
+const selectSchemasByArchivedStmt = db.prepare(
+  'SELECT id, name, created_at, updated_at, archived FROM schemas WHERE archived = ? ORDER BY updated_at DESC, id DESC'
+);
 const selectAllSchemasStmt = db.prepare(
-  'SELECT id, name, created_at, updated_at FROM schemas ORDER BY updated_at DESC, id DESC'
+  'SELECT id, name, created_at, updated_at, archived FROM schemas ORDER BY updated_at DESC, id DESC'
 );
 const getSchemaByIdStmt = db.prepare(
-  'SELECT id, name, payload, created_at, updated_at FROM schemas WHERE id = ?'
+  'SELECT id, name, payload, archived, created_at, updated_at FROM schemas WHERE id = ?'
 );
 const getSchemaByNameStmt = db.prepare('SELECT id FROM schemas WHERE LOWER(name) = LOWER(?)');
 const insertSchemaStmt = db.prepare(
-  'INSERT INTO schemas (name, payload, created_at, updated_at) VALUES (?, ?, ?, ?)'
+  'INSERT INTO schemas (name, payload, archived, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
 );
 const updateSchemaStmt = db.prepare(
-  'UPDATE schemas SET name = ?, payload = ?, updated_at = ? WHERE id = ?'
+  'UPDATE schemas SET name = ?, payload = ?, archived = ?, updated_at = ? WHERE id = ?'
 );
 const deleteSchemaStmt = db.prepare('DELETE FROM schemas WHERE id = ?');
+const insertAuditStmt = db.prepare(
+  'INSERT INTO schema_audit (schema_id, name, action, actor, created_at, extra) VALUES (?, ?, ?, ?, ?, ?)'
+);
+const selectAuditBySchemaStmt = db.prepare(
+  'SELECT id, schema_id, name, action, actor, created_at, extra FROM schema_audit WHERE schema_id = ? ORDER BY created_at DESC, id DESC'
+);
 
 const getUserByUsernameStmt = db.prepare(
   'SELECT id, username, password_hash, created_at FROM users WHERE LOWER(username) = LOWER(?)'
@@ -198,6 +228,16 @@ function toSafeUserPayload(user) {
   };
 }
 
+function recordSchemaAudit({ schemaId, name, action, actor, extra = null }) {
+  try {
+    const createdAt = new Date().toISOString();
+    const payload = extra ? JSON.stringify(extra) : null;
+    insertAuditStmt.run(schemaId ?? null, name ?? null, action, actor ?? null, createdAt, payload);
+  } catch (err) {
+    console.error('[audit] echec enregistrement audit', err);
+  }
+}
+
 function attachUser(req, res, next) {
   const token = req.cookies?.auth_token;
   if (!token) {
@@ -307,8 +347,20 @@ app.get(`${API_PREFIX}/auth/me`, (req, res) => {
   res.json({ user: req.user });
 });
 
-app.get(`${API_PREFIX}/schemas`, (_req, res) => {
-  const rows = selectAllSchemasStmt.all();
+app.get(`${API_PREFIX}/schemas`, (req, res) => {
+  const query = req.query || {};
+  let rows;
+  const archivedFilter = typeof query.archived === 'string' ? query.archived.trim() : null;
+  const includeArchived = query.includeArchived === '1';
+  if (archivedFilter === '1') {
+    rows = selectSchemasByArchivedStmt.all(1);
+  } else if (archivedFilter === '0') {
+    rows = selectSchemasByArchivedStmt.all(0);
+  } else if (includeArchived) {
+    rows = selectAllSchemasStmt.all();
+  } else {
+    rows = selectSchemasByArchivedStmt.all(0);
+  }
   res.json({ items: rows });
 });
 
@@ -326,14 +378,34 @@ app.get(`${API_PREFIX}/schemas/:id`, (req, res) => {
   res.json({
     id: row.id,
     name: row.name,
+    archived: Boolean(row.archived),
     created_at: row.created_at,
     updated_at: row.updated_at,
     payload: JSON.parse(row.payload)
   });
 });
 
+app.get(`${API_PREFIX}/schemas/:id/audit`, requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Identifiant invalide' });
+    return;
+  }
+  const rows = selectAuditBySchemaStmt.all(id);
+  const events = rows.map((entry) => ({
+    id: entry.id,
+    schema_id: entry.schema_id,
+    name: entry.name,
+    action: entry.action,
+    actor: entry.actor,
+    created_at: entry.created_at,
+    extra: entry.extra ? JSON.parse(entry.extra) : null
+  }));
+  res.json({ events });
+});
+
 app.post(`${API_PREFIX}/schemas`, requireAuth, (req, res) => {
-  const { id: rawId, name, payload } = req.body || {};
+  const { id: rawId, name, payload, archived: rawArchived } = req.body || {};
   const trimmed = normalizeName(name);
   if (!trimmed) {
     res.status(400).json({ error: 'Le nom du schema est obligatoire' });
@@ -348,6 +420,9 @@ app.post(`${API_PREFIX}/schemas`, requireAuth, (req, res) => {
   const stringified = JSON.stringify(payload);
   const id = Number(rawId) > 0 ? Number(rawId) : null;
   let targetId = id;
+  const actor = req.user?.username || null;
+  const archivedInput =
+    rawArchived === true || rawArchived === '1' || rawArchived === 1 ? 1 : 0;
 
   if (!targetId) {
     const existing = getSchemaByNameStmt.get(trimmed);
@@ -355,11 +430,27 @@ app.post(`${API_PREFIX}/schemas`, requireAuth, (req, res) => {
   }
 
   if (targetId) {
-    updateSchemaStmt.run(trimmed, stringified, now, targetId);
+    const current = getSchemaByIdStmt.get(targetId);
+    if (!current) {
+      res.status(404).json({ error: 'Schema introuvable' });
+      return;
+    }
+    const archivedValue =
+      rawArchived === undefined || rawArchived === null
+        ? current.archived
+        : archivedInput;
+    updateSchemaStmt.run(trimmed, stringified, archivedValue ? 1 : 0, now, targetId);
     const updated = getSchemaByIdStmt.get(targetId);
+    recordSchemaAudit({
+      schemaId: targetId,
+      name: trimmed,
+      action: 'update',
+      actor
+    });
     res.json({
       id: updated.id,
       name: updated.name,
+      archived: Boolean(updated.archived),
       created_at: updated.created_at,
       updated_at: updated.updated_at,
       status: 'updated'
@@ -367,10 +458,18 @@ app.post(`${API_PREFIX}/schemas`, requireAuth, (req, res) => {
     return;
   }
 
-  const info = insertSchemaStmt.run(trimmed, stringified, now, now);
-  res.status(201).json({
-    id: info.lastInsertRowid,
+  const info = insertSchemaStmt.run(trimmed, stringified, archivedInput, now, now);
+  const schemaId = Number(info.lastInsertRowid);
+  recordSchemaAudit({
+    schemaId,
     name: trimmed,
+    action: 'create',
+    actor
+  });
+  res.status(201).json({
+    id: schemaId,
+    name: trimmed,
+    archived: Boolean(archivedInput),
     created_at: now,
     updated_at: now,
     status: 'created'
@@ -383,7 +482,7 @@ app.put(`${API_PREFIX}/schemas/:id`, requireAuth, (req, res) => {
     res.status(400).json({ error: 'Identifiant invalide' });
     return;
   }
-  const { name, payload } = req.body || {};
+  const { name, payload, archived: rawArchived } = req.body || {};
   const trimmed = normalizeName(name);
   if (!trimmed) {
     res.status(400).json({ error: 'Le nom du schema est obligatoire' });
@@ -399,13 +498,64 @@ app.put(`${API_PREFIX}/schemas/:id`, requireAuth, (req, res) => {
     res.status(404).json({ error: 'Schema introuvable' });
     return;
   }
-  updateSchemaStmt.run(trimmed, JSON.stringify(payload), now, id);
+  const archivedValue =
+    rawArchived === undefined || rawArchived === null
+      ? target.archived
+      : rawArchived === true || rawArchived === '1' || rawArchived === 1
+        ? 1
+        : 0;
+  updateSchemaStmt.run(trimmed, JSON.stringify(payload), archivedValue ? 1 : 0, now, id);
+  recordSchemaAudit({
+    schemaId: id,
+    name: trimmed,
+    action: 'update',
+    actor: req.user?.username || null
+  });
   res.json({
     id,
     name: trimmed,
+    archived: Boolean(archivedValue),
     created_at: target.created_at,
     updated_at: now,
     status: 'updated'
+  });
+});
+
+app.post(`${API_PREFIX}/schemas/:id/archive`, requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Identifiant invalide' });
+    return;
+  }
+  const { archived: rawArchived } = req.body || {};
+  const target = getSchemaByIdStmt.get(id);
+  if (!target) {
+    res.status(404).json({ error: 'Schema introuvable' });
+    return;
+  }
+  const archivedValue =
+    rawArchived === true || rawArchived === '1' || rawArchived === 1 ? 1 : 0;
+  const now = new Date().toISOString();
+  updateSchemaStmt.run(
+    target.name,
+    target.payload,
+    archivedValue ? 1 : 0,
+    now,
+    id
+  );
+  recordSchemaAudit({
+    schemaId: id,
+    name: target.name,
+    action: archivedValue ? 'archive' : 'unarchive',
+    actor: req.user?.username || null
+  });
+  res.json({
+    id,
+    name: target.name,
+    archived: Boolean(archivedValue),
+    created_at: target.created_at,
+    updated_at: now,
+    status: archivedValue ? 'archived' : 'restored'
   });
 });
 
@@ -421,6 +571,12 @@ app.delete(`${API_PREFIX}/schemas/:id`, requireAuth, (req, res) => {
     return;
   }
   deleteSchemaStmt.run(id);
+  recordSchemaAudit({
+    schemaId: id,
+    name: target.name,
+    action: 'delete',
+    actor: req.user?.username || null
+  });
   res.status(204).end();
 });
 

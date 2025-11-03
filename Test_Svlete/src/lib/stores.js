@@ -71,6 +71,7 @@ export const draftAvailable = writable(false);
 export const undoAvailable = writable(false);
 export const redoAvailable = writable(false);
 export const searchFilters = writable({ group: 'all', gammes: [] });
+export const archivedSchemas = writable([]);
 
 /* ------------ Helpers internes ----------- */
 function normalizeArr(a) {
@@ -713,6 +714,41 @@ async function apiFetch(path, options = {}) {
   return body;
 }
 
+function sortByUpdatedDate(list) {
+  return list.sort((a, b) => {
+    const aDate = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
+    const bDate = b?.updated_at ? new Date(b.updated_at).getTime() : 0;
+    return bDate - aDate;
+  });
+}
+
+function toSchemaEntry(record) {
+  return {
+    id: record.id,
+    name: record.name,
+    archived: Boolean(record.archived),
+    updated_at: record.updated_at,
+    created_at: record.created_at
+  };
+}
+
+function updateSchemaStores(entry) {
+  savedSchemas.update((items) => {
+    const remaining = Array.isArray(items) ? items.filter((it) => it.id !== entry.id) : [];
+    if (entry.archived) {
+      return sortByUpdatedDate(remaining);
+    }
+    return sortByUpdatedDate([entry, ...remaining]);
+  });
+  archivedSchemas.update((items) => {
+    const remaining = Array.isArray(items) ? items.filter((it) => it.id !== entry.id) : [];
+    if (entry.archived) {
+      return sortByUpdatedDate([entry, ...remaining]);
+    }
+    return sortByUpdatedDate(remaining);
+  });
+}
+
 export async function checkAuth() {
   try {
     const data = await apiFetch('/api/auth/me');
@@ -797,14 +833,19 @@ export async function createUserAccount(username, password) {
   }
 }
 
-export async function refreshSavedSchemas() {
+export async function refreshSavedSchemas({ includeArchived = true } = {}) {
   try {
-    const data = await apiFetch('/api/schemas');
+    const query = includeArchived ? '?includeArchived=1' : '?archived=0';
+    const data = await apiFetch(`/api/schemas${query}`);
     const items = Array.isArray(data?.items) ? data.items : [];
-    savedSchemas.set(items);
-    return items;
+    const activeItems = items.filter((item) => !item.archived);
+    const archivedItems = includeArchived ? items.filter((item) => item.archived) : [];
+    savedSchemas.set(activeItems);
+    archivedSchemas.set(includeArchived ? archivedItems : []);
+    return { active: activeItems, archived: archivedItems };
   } catch (err) {
     savedSchemas.set([]);
+    archivedSchemas.set([]);
     throw err;
   }
 }
@@ -814,19 +855,31 @@ export async function loadSchemaFromDatabase(id) {
   const record = await apiFetch(`/api/schemas/${id}`);
   if (!record?.payload) throw new Error('Reponse inattendue depuis le serveur');
   hydrateFromPayload(record.payload, { schemaId: record.id });
-  activeSchema.set({ id: record.id, name: record.name, updated_at: record.updated_at });
+  activeSchema.set({
+    id: record.id,
+    name: record.name,
+    archived: Boolean(record.archived),
+    updated_at: record.updated_at
+  });
   return record;
 }
 
 export async function saveSchemaToDatabase(
   name,
-  { id = null, payloadOverride = null, skipSetActive = false } = {}
+  { id = null, payloadOverride = null, skipSetActive = false, archived: archivedOverride = undefined } = {}
 ) {
   const trimmed = String(name || '').trim();
   if (!trimmed) throw new Error('Nom de schema obligatoire');
 
   const payload = payloadOverride || buildPayload();
-  const body = { name: trimmed, payload };
+  const current = get(activeSchema);
+  const archivedFlag =
+    archivedOverride !== undefined
+      ? Boolean(archivedOverride)
+      : current && current.id === id
+        ? Boolean(current.archived)
+        : false;
+  const body = { name: trimmed, payload, archived: archivedFlag };
   if (id) body.id = id;
 
   let record;
@@ -842,22 +895,16 @@ export async function saveSchemaToDatabase(
     throw err;
   }
 
-  savedSchemas.update((items) => {
-    const remaining = Array.isArray(items) ? items.filter((it) => it.id !== record.id) : [];
-    const entry = {
+  const entry = toSchemaEntry(record);
+  updateSchemaStores(entry);
+
+  if (!skipSetActive) {
+    activeSchema.set({
       id: record.id,
       name: record.name,
-      updated_at: record.updated_at,
-      created_at: record.created_at
-    };
-    return [entry, ...remaining].sort((a, b) => {
-      const aDate = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
-      const bDate = b?.updated_at ? new Date(b.updated_at).getTime() : 0;
-      return bDate - aDate;
+      archived: entry.archived,
+      updated_at: record.updated_at
     });
-  });
-  if (!skipSetActive) {
-    activeSchema.set({ id: record.id, name: record.name, updated_at: record.updated_at });
   }
   setBaseline({ schemaId: record.id, resetHistory: false });
   return record;
@@ -874,8 +921,42 @@ export async function deleteSchemaFromDatabase(id) {
     throw err;
   }
   savedSchemas.update((items) => items.filter((item) => item.id !== id));
+  archivedSchemas.update((items) => items.filter((item) => item.id !== id));
   if (get(activeSchema)?.id === id) {
     activeSchema.set(null);
+  }
+}
+
+export async function archiveSchemaInDatabase(id, archived = true) {
+  if (!id) throw new Error('Schema id manquant');
+  const body = { archived: Boolean(archived) };
+  const record = await apiFetch(`/api/schemas/${id}/archive`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  });
+  const entry = toSchemaEntry(record);
+  updateSchemaStores(entry);
+  if (get(activeSchema)?.id === id) {
+    activeSchema.update((current) =>
+      current
+        ? { ...current, archived: entry.archived, updated_at: record.updated_at }
+        : current
+    );
+  }
+  return record;
+}
+
+export async function fetchSchemaAudit(id) {
+  if (!id) throw new Error('Schema id manquant');
+  try {
+    const data = await apiFetch(`/api/schemas/${id}/audit`, { method: 'GET' });
+    const events = Array.isArray(data?.events) ? data.events : [];
+    return events;
+  } catch (err) {
+    if (err?.status === 401) {
+      throw new Error('Connexion requise pour consulter l audit.');
+    }
+    throw err;
   }
 }
 

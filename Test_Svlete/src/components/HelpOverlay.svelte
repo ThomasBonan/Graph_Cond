@@ -130,6 +130,7 @@
             <h3>Actions clefs</h3>
             <ul>
               <li>Nommer le schema puis utiliser <strong>Enregistrer</strong> ou <strong>Mettre a jour</strong>.</li>
+              <li><strong>Archiver</strong> pour retirer un schema de la liste principale tout en le restaurant depuis la section dediee.</li>
               <li><strong>Dupliquer</strong> pour cloner le schema courant avant d iterer.</li>
               <li><strong>Supprimer</strong> retire definitivement le schema selectionne.</li>
               <li>Liste deroulante pour charger un schema conserve en base.</li>

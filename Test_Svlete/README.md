@@ -39,7 +39,8 @@ Prise en main
    npm run server     # lance l API Express (port 3000)
    ```
 5. **Configuration**
-   - Copier `.env` si besoin et ajuster `JWT_SECRET`, `JWT_TTL_SECONDS`, identifiants bootstrap, etc.
+   - Copier `.env.template` vers `.env`, puis renseigner `JWT_SECRET`, la duree de vie des tokens, les identifiants bootstrap, etc.
+   - Adapter eventuellement `VITE_API_BASE` si le frontend est servi derriere un proxy different.
    - Le dossier `data/` (SQLite) est persistant: montez-le en volume ou sauvegardez-le regulierement.
 
 Utilisation
@@ -49,6 +50,7 @@ Utilisation
   - Connexion requise pour creer ou modifier des schemas.
   - Nommer le schema puis cliquer sur `Enregistrer` ou `Mettre a jour`.
   - `Dupliquer` cree une copie pour iterer rapidement.
+  - `Archiver` retire un schema de la liste principale tout en le laissant restaurable depuis la section "Schemas archives".
   - `Supprimer` retire un schema existant (confirmation demandee).
   - Undo/Redo disponibles tant que la session reste ouverte.
   - Un brouillon local est sauvegarde automatiquement et restaurable via `Restaurer`.
@@ -99,6 +101,7 @@ Maintenance et sauvegardes
   - `Ctrl/Cmd + S` : sauver le schema dans la base.
   - `Ctrl/Cmd + F` : focus barre de recherche et ouverture du menu.
   - `Escape` : fermer menu, aide ou formulaire de connexion.
+- Endpoint d audit: `GET /api/schemas/:id/audit` (auth requis) pour suivre creations, archivages et suppressions.
 
 Support
 -------
