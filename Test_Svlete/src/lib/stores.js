@@ -72,8 +72,10 @@ export const undoAvailable = writable(false);
 export const redoAvailable = writable(false);
 export const searchFilters = writable({ group: 'all', gammes: [] });
 export const archivedSchemas = writable([]);
+export const auditSummaries = writable([]);
 export const auditPanelOpen = writable(false);
 export const auditSelectedSchemaId = writable(null);
+export const storedSelections = writable([]);
 
 /* ------------ Helpers internes ----------- */
 function normalizeArr(a) {
@@ -646,8 +648,8 @@ export function buildPayload() {
   };
 }
 
-export function downloadJSON(filename = 'configurateur.json') {
-  const payload = buildPayload();
+export function downloadJSON(filename = 'configurateur.json', payloadOverride = null) {
+  const payload = payloadOverride || buildPayload();
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -656,8 +658,36 @@ export function downloadJSON(filename = 'configurateur.json') {
   a.click();
   URL.revokeObjectURL(url);
 }
-export function exportJSON(filename = 'configurateur.json') {
-  return downloadJSON(filename);
+
+function downloadText(filename, content) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function sanitizeFilename(base, fallback = 'export') {
+  const normalized = typeof base === 'string' && base.length ? base : fallback;
+  const safe = normalized
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^0-9a-zA-Z-_]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return safe || fallback;
+}
+
+export function exportJSON(filename = null) {
+  const schema = get(activeSchema);
+  const base = filename && String(filename).trim()
+    ? String(filename).trim()
+    : schema?.name || 'configurateur';
+  const safe = sanitizeFilename(base, 'schema');
+  const finalName = safe.endsWith('.json') ? safe : `${safe}.json`;
+  return downloadJSON(finalName);
 }
 
 /* =========================================
@@ -852,6 +882,21 @@ export async function refreshSavedSchemas({ includeArchived = true } = {}) {
   }
 }
 
+export async function refreshAuditSummaries() {
+  try {
+    const data = await apiFetch('/api/schema-audit/summaries');
+    const items = Array.isArray(data?.items) ? data.items : [];
+    auditSummaries.set(items);
+    return items;
+  } catch (err) {
+    auditSummaries.set([]);
+    if (err?.status === 403) {
+      throw new Error('Acces reserve au compte bootstrap.');
+    }
+    throw err;
+  }
+}
+
 export async function loadSchemaFromDatabase(id) {
   if (!id) throw new Error('Schema id manquant');
   const record = await apiFetch(`/api/schemas/${id}`);
@@ -927,6 +972,13 @@ export async function deleteSchemaFromDatabase(id) {
   if (get(activeSchema)?.id === id) {
     activeSchema.set(null);
   }
+  if (get(authUser)?.isBootstrap) {
+    try {
+      await refreshAuditSummaries();
+    } catch (err) {
+      console.error('refreshAuditSummaries delete', err);
+    }
+  }
 }
 
 export async function archiveSchemaInDatabase(id, archived = true) {
@@ -945,6 +997,13 @@ export async function archiveSchemaInDatabase(id, archived = true) {
         : current
     );
   }
+  if (get(authUser)?.isBootstrap) {
+    try {
+      await refreshAuditSummaries();
+    } catch (err) {
+      console.error('refreshAuditSummaries archive', err);
+    }
+  }
   return record;
 }
 
@@ -960,6 +1019,107 @@ export async function fetchSchemaAudit(id) {
     }
     throw err;
   }
+}
+
+function buildSelectionHierarchy(selectionIds, groupedData, labels) {
+  const selectionSet = new Set(selectionIds);
+  const consumed = new Set();
+  const groups = [];
+
+  for (const [groupName, info] of Object.entries(groupedData || {})) {
+    const items = [];
+    const root = Array.isArray(info?.root) ? info.root : [];
+    const rootSelected = root.filter((id) => selectionSet.has(id));
+    if (rootSelected.length) {
+      rootSelected.forEach((id) => consumed.add(id));
+      items.push({
+        name: null,
+        nodes: rootSelected.map((id) => labels[id] || id)
+      });
+    }
+    for (const [subName, ids] of Object.entries(info?.subgroups || {})) {
+      const nodes = (ids || []).filter((id) => selectionSet.has(id));
+      if (nodes.length) {
+        nodes.forEach((id) => consumed.add(id));
+        items.push({
+          name: subName,
+          nodes: nodes.map((id) => labels[id] || id)
+        });
+      }
+    }
+    if (items.length) {
+      groups.push({ name: groupName, items });
+    }
+  }
+
+  const leftovers = Array.from(selectionSet).filter((id) => !consumed.has(id));
+  if (leftovers.length) {
+    groups.push({
+      name: 'Sans groupe',
+      items: [
+        {
+          name: null,
+          nodes: leftovers.map((id) => labels[id] || id)
+        }
+      ]
+    });
+  }
+  return groups;
+}
+
+export function storeCurrentSelectionSnapshot() {
+  const selection = get(selected);
+  if (!selection || selection.size === 0) {
+    throw new Error('Aucune option selectionnee.');
+  }
+  const schema = get(activeSchema);
+  const schemaName = schema?.name || 'Schema sans nom';
+  const groupedData = get(grouped) || {};
+  const labels = get(optionLabels) || {};
+  const selectionIds = Array.from(selection);
+  const groups = buildSelectionHierarchy(selectionIds, groupedData, labels);
+  if (!groups.length) {
+    throw new Error('Impossible de determiner la structure des selections.');
+  }
+  const entry = {
+    schemaId: schema?.id ?? null,
+    schemaName,
+    timestamp: new Date().toISOString(),
+    groups
+  };
+  storedSelections.update((list) => [...list, entry]);
+}
+
+export function clearStoredSelections() {
+  storedSelections.set([]);
+}
+
+export function exportStoredSelectionsTxt(filename = null) {
+  const selections = get(storedSelections);
+  if (!selections.length) {
+    throw new Error('Aucune selection stockee.');
+  }
+  const lines = [];
+  selections.forEach((entry, index) => {
+    lines.push(`# ${entry.schemaName || 'Schema sans nom'}`);
+    (entry.groups || []).forEach((group) => {
+      lines.push(`## ${group.name || 'Sans groupe'}`);
+      (group.items || []).forEach((item) => {
+        lines.push(item.name ? `### ${item.name}` : '### Sans sous-groupe');
+        (item.nodes || []).forEach((label) => {
+          lines.push(`- ${label}`);
+        });
+        lines.push('');
+      });
+    });
+    if (index !== selections.length - 1) {
+      lines.push('');
+    }
+  });
+  const content = lines.join('\n').trimEnd();
+  const baseName = filename && filename.trim().length ? filename.trim() : 'selections';
+  const finalName = `${sanitizeFilename(baseName, 'selections')}.txt`;
+  downloadText(finalName, content);
 }
 
 export function openAuditPanel(schemaId = null) {

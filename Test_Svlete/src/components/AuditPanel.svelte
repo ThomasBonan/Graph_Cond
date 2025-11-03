@@ -7,14 +7,18 @@
 -->
 <script>
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import {
     auditPanelOpen,
     auditSelectedSchemaId,
     savedSchemas,
     archivedSchemas,
+    auditSummaries,
     fetchSchemaAudit,
     closeAuditPanel,
-    refreshSavedSchemas
+    refreshSavedSchemas,
+    refreshAuditSummaries,
+    authUser
   } from '../lib/stores.js';
   import { toastError } from '../lib/toasts.js';
 
@@ -43,11 +47,58 @@ function actionLabel(action) {
       return action;
   }
 }
+  $: baseSchemas = [
+    ...$savedSchemas.map((s) => ({
+      id: s.id,
+      name: s.name,
+      archived: false,
+      deleted: false,
+      lastAction: null,
+      lastEventAt: null
+    })),
+    ...$archivedSchemas.map((s) => ({
+      id: s.id,
+      name: s.name,
+      archived: true,
+      deleted: false,
+      lastAction: null,
+      lastEventAt: null
+    }))
+  ];
+
+  $: summarySchemas = $auditSummaries
+    .filter((entry) => entry?.schema_id != null)
+    .map((entry) => ({
+      id: entry.schema_id,
+      name: entry.name,
+      archived: Boolean(entry.archived),
+      deleted: !entry.exists,
+      lastAction: entry.action,
+      lastEventAt: entry.created_at
+    }));
 
   $: allSchemas = (() => {
     const map = new Map();
-    [...$savedSchemas.map((s) => ({ ...s, archived: false })), ...$archivedSchemas.map((s) => ({ ...s, archived: true }))].forEach((schema) => {
-      map.set(schema.id, schema);
+    baseSchemas.forEach((schema) => {
+      if (schema.id != null) {
+        map.set(schema.id, { ...schema });
+      }
+    });
+    summarySchemas.forEach((entry) => {
+      if (entry.id == null) return;
+      if (map.has(entry.id)) {
+        const existing = map.get(entry.id);
+        map.set(entry.id, {
+          ...existing,
+          name: entry.name || existing.name,
+          archived: existing.archived || entry.archived,
+          deleted: entry.deleted,
+          lastAction: entry.lastAction || existing.lastAction,
+          lastEventAt: entry.lastEventAt || existing.lastEventAt
+        });
+      } else {
+        map.set(entry.id, { ...entry });
+      }
     });
     return Array.from(map.values()).sort((a, b) =>
       (a.name || '').localeCompare(b.name || '', 'fr', { sensitivity: 'base' })
@@ -65,6 +116,14 @@ function actionLabel(action) {
       await refreshSavedSchemas({ includeArchived: true });
     } catch (err) {
       toastError(err?.message || 'Impossible de rafraichir les schemas.');
+    }
+    const currentUser = get(authUser);
+    if (currentUser?.isBootstrap) {
+      try {
+        await refreshAuditSummaries();
+      } catch (err) {
+        toastError(err?.message || 'Impossible de charger les resumes de logs.');
+      }
     }
   }
 
@@ -160,10 +219,19 @@ function actionLabel(action) {
                   class:selected={schema.id === selectedId}
                   on:click={() => selectSchema(schema)}
                 >
-                  <span>{schema.name}</span>
-                  {#if schema.archived}
-                    <span class="tag">Archive</span>
-                  {/if}
+                  <div class="item-info">
+                    <span class="item-name">{schema.name || `Schema ${schema.id}`}</span>
+                    <span class="tag-group">
+                      {#if schema.deleted}
+                        <span class="tag danger">Supprime</span>
+                      {:else if schema.archived}
+                        <span class="tag">Archive</span>
+                      {/if}
+                      {#if schema.lastAction}
+                        <span class="last-action">{actionLabel(schema.lastAction)}</span>
+                      {/if}
+                    </span>
+                  </div>
                 </button>
               </li>
             {/each}
@@ -306,15 +374,30 @@ function actionLabel(action) {
     text-align:left;
     padding:10px 16px;
     display:flex;
-    justify-content:space-between;
-    align-items:center;
-    gap:8px;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:6px;
     font-size:13px;
     cursor:pointer;
+    border-left:2px solid transparent;
   }
   .audit-sidebar button.selected {
     background:#e2e8f0;
+    border-left-color:#2563eb;
+  }
+  .item-info {
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+  }
+  .item-name {
     font-weight:600;
+  }
+  .tag-group {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    align-items:center;
   }
   .tag {
     font-size:11px;
@@ -323,6 +406,16 @@ function actionLabel(action) {
     background:#e0e7ff;
     padding:2px 8px;
     border-radius:999px;
+  }
+  .tag.danger {
+    color:#b91c1c;
+    background:#fee2e2;
+  }
+  .last-action {
+    font-size:11px;
+    color:#64748b;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
   }
   .audit-content {
     padding:16px 20px;

@@ -19,6 +19,7 @@ import {
     archivedSchemas,
     activeSchema,
     refreshSavedSchemas,
+    refreshAuditSummaries,
     saveSchemaToDatabase,
     loadSchemaFromDatabase,
     deleteSchemaFromDatabase,
@@ -33,6 +34,7 @@ import {
     restoreDraft,
     searchFilters,
     grouped,
+    selected,
     authUser,
     authStatus,
     loginUser,
@@ -40,7 +42,11 @@ import {
     checkAuth,
     createUserAccount,
     archiveSchemaInDatabase,
-    openAuditPanel
+    openAuditPanel,
+    storedSelections,
+    storeCurrentSelectionSnapshot,
+    clearStoredSelections,
+    exportStoredSelectionsTxt
   } from '../lib/stores.js';
   import { toastSuccess, toastError, toastInfo } from '../lib/toasts.js';
   import { readmeLinks } from '../lib/readme-content.js';
@@ -109,20 +115,50 @@ import {
       await createUserAccount(username, password);
       toastSuccess(`Utilisateur "${username}" cree.`);
       resetCreateUserForm();
-  } catch (err) {
-    toastError(err?.message || 'Creation utilisateur impossible.');
-  } finally {
-    creatingUser = false;
+    } catch (err) {
+      toastError(err?.message || 'Creation utilisateur impossible.');
+    } finally {
+      creatingUser = false;
+    }
   }
-}
 
   async function handleOpenAuditPanel() {
     try {
       await refreshList();
+      if (canManageUsers) {
+        try {
+          await refreshAuditSummaries();
+        } catch (err) {
+          toastError(err?.message || 'Impossible de charger les logs.');
+        }
+      }
       openAuditPanel($activeSchema?.id || null);
     } catch (err) {
-      toastError(err?.message || 'Impossible d ouvrir les logs.');
+      toastError(err?.message || "Impossible d'ouvrir les logs.");
     }
+  }
+
+  function handleStoreSelection() {
+    try {
+      storeCurrentSelectionSnapshot();
+      toastSuccess('Selection stockee.');
+    } catch (err) {
+      toastError(err?.message || 'Impossible de stocker la selection.');
+    }
+  }
+
+  function handleExportStoredSelections() {
+    try {
+      exportStoredSelectionsTxt();
+      toastSuccess('Export texte genere.');
+    } catch (err) {
+      toastError(err?.message || "Impossible d'exporter le stockage.");
+    }
+  }
+
+  function handleClearStoredSelections() {
+    clearStoredSelections();
+    toastInfo('Stockage temporaire vide.');
   }
 
   async function handleImport(event) {
@@ -457,6 +493,9 @@ import {
   }
 
   const gammeOptions = ['Smart', 'Mod', 'Evo'];
+  $: selectionCount = $selected ? ($selected.size || ($selected.length ?? 0)) : 0;
+  $: storedSelectionsCount = Array.isArray($storedSelections) ? $storedSelections.length : 0;
+
   $: groupOptions = Object.keys($grouped || {}).sort((a, b) =>
     a.localeCompare(b, 'fr', { sensitivity: 'base' })
   );
@@ -649,13 +688,92 @@ import {
           {/if}
         </div>
 
-        <div class="auth-wrap">
-          <h3 class="section-title">Authentification</h3>
+        <div class="filters-wrap">
+          <h3 class="section-title">Rechercher & filtrer</h3>
+          <div class="search-wrap">
+            <label class="visually-hidden" for="search-input">Rechercher</label>
+            <input
+              id="search-input"
+              class="search" bind:this={searchInputEl}
+              type="search"
+              placeholder="Rechercher un noeud, un groupe ou un sous-groupe..."
+              value={searchValue}
+              on:input={handleSearchInput}
+            />
+          </div>
+          <div class="filter-line">
+            <label class="filter-label" for="group-filter">Groupe</label>
+            <select
+              id="group-filter"
+              class="filter-select"
+              value={$searchFilters.group}
+              on:change={handleGroupFilter}
+            >
+              <option value="all">Tous les groupes</option>
+              {#each groupOptions as group}
+                <option value={group}>{group}</option>
+              {/each}
+            </select>
+            <div class="filter-gammes">
+              <span class="filter-label">Gammes</span>
+              {#each gammeOptions as gamme}
+                <label class="filter-check">
+                  <input
+                    type="checkbox"
+                    checked={($searchFilters.gammes || []).includes(gamme)}
+                    on:change={() => toggleGammeFilter(gamme)}
+                  />
+                  {gamme}
+                </label>
+              {/each}
+            </div>
+            <button class="btn btn-link" type="button" on:click={clearFilters} disabled={!filtersActive}>
+              Reinitialiser
+            </button>
+          </div>
+        </div>
+
+        <div class="actions-wrap">
+          <h3 class="section-title">Autres actions</h3>
+          <div class="actions-grid">
+              <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit || $mode !== 'editor'}>
+                Importer
+              </button>
+              <button class="btn btn-sm" type="button" on:click={() => exportJSON()} disabled={!canEdit || $mode !== 'editor'}>
+                Exporter JSON
+              </button>
+              <button class="btn btn-sm" type="button" on:click={openReadme}>
+                README
+              </button>
+              <button class="btn btn-sm" type="button" on:click={resetAll}>
+                Reinitialiser
+              </button>
+              <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
+                Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
+              </button>
+              {#if $mode === 'configurateur'}
+              <button class="btn btn-sm" type="button" on:click={handleStoreSelection} disabled={selectionCount === 0}>
+                Stocker la selection
+              </button>
+                <button class="btn btn-sm" type="button" on:click={handleExportStoredSelections} disabled={!storedSelectionsCount}>
+                  Exporter stockage ({storedSelectionsCount})
+                </button>
+                <button class="btn btn-sm" type="button" on:click={handleClearStoredSelections} disabled={!storedSelectionsCount}>
+                  Vider stockage
+                </button>
+              {/if}
+          </div>
+        </div>
+
+        <h3 class="section-title">Compte</h3>
+        <div class="account-section">
           {#if authLoading}
             <span class="auth-loading">Authentification...</span>
           {:else if $authUser}
-            <span class="user-badge" title="Utilisateur connecte">{$authUser.username}</span>
-            <button class="btn btn-sm" type="button" on:click={handleLogout}>Se deconnecter</button>
+            <div class="account-row">
+              <span class="user-badge" title="Utilisateur connecte">{$authUser.username}</span>
+              <button class="btn btn-sm" type="button" on:click={handleLogout}>Se deconnecter</button>
+            </div>
             {#if canManageUsers}
               <div class="user-admin">
                 <button class="btn btn-sm" type="button" on:click={handleOpenAuditPanel}>
@@ -757,72 +875,6 @@ import {
               </button>
             {/if}
           {/if}
-        </div>
-
-        <div class="filters-wrap">
-          <h3 class="section-title">Rechercher & filtrer</h3>
-          <div class="search-wrap">
-            <label class="visually-hidden" for="search-input">Rechercher</label>
-            <input
-              id="search-input"
-              class="search" bind:this={searchInputEl}
-              type="search"
-              placeholder="Rechercher un noeud, un groupe ou un sous-groupe..."
-              value={searchValue}
-              on:input={handleSearchInput}
-            />
-          </div>
-          <div class="filter-line">
-            <label class="filter-label" for="group-filter">Groupe</label>
-            <select
-              id="group-filter"
-              class="filter-select"
-              value={$searchFilters.group}
-              on:change={handleGroupFilter}
-            >
-              <option value="all">Tous les groupes</option>
-              {#each groupOptions as group}
-                <option value={group}>{group}</option>
-              {/each}
-            </select>
-            <div class="filter-gammes">
-              <span class="filter-label">Gammes</span>
-              {#each gammeOptions as gamme}
-                <label class="filter-check">
-                  <input
-                    type="checkbox"
-                    checked={($searchFilters.gammes || []).includes(gamme)}
-                    on:change={() => toggleGammeFilter(gamme)}
-                  />
-                  {gamme}
-                </label>
-              {/each}
-            </div>
-            <button class="btn btn-link" type="button" on:click={clearFilters} disabled={!filtersActive}>
-              Reinitialiser
-            </button>
-          </div>
-        </div>
-
-        <div class="actions-wrap">
-          <h3 class="section-title">Autres actions</h3>
-          <div class="actions-grid">
-              <button class="btn btn-sm" type="button" on:click={chooseFile} disabled={!canEdit || $mode !== 'editor'}>
-                Importer
-              </button>
-              <button class="btn btn-sm" type="button" on:click={exportJSON} disabled={!canEdit || $mode !== 'editor'}>
-                Exporter JSON
-              </button>
-              <button class="btn btn-sm" type="button" on:click={openReadme}>
-                README
-              </button>
-              <button class="btn btn-sm" type="button" on:click={resetAll}>
-                Reinitialiser
-              </button>
-              <button class="btn btn-sm" type="button" on:click={toggleTheme} aria-label="Theme">
-                Theme: {$theme === 'dark' ? 'clair' : 'sombre'}
-            </button>
-          </div>
         </div>
       </div>
       <input bind:this={fileEl} type="file" hidden accept=".json,.js" on:change={handleImport} />
@@ -1071,12 +1123,6 @@ import {
   }
   .btn-ghost:hover { background:rgba(37,99,235,0.08); }
 
-  .auth-wrap {
-    display:flex;
-    flex-wrap:wrap;
-    gap:8px;
-    align-items:center;
-  }
   .auth-loading { font-size:12px; color: var(--c-text-muted, #8b93a7); }
   .login-form {
     display:flex;
@@ -1093,6 +1139,20 @@ import {
     color: var(--text-color, #0f172a);
   }
   .login-actions { display:flex; gap:6px; }
+  .account-section {
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    border:1px solid var(--border-color, #dfe3ea);
+    border-radius:8px;
+    padding:12px;
+    background: rgba(241, 245, 249, 0.6);
+  }
+  .account-row {
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
   .user-admin { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
   .user-create {
     display:flex;

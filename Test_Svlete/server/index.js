@@ -117,6 +117,22 @@ const insertAuditStmt = db.prepare(
 const selectAuditBySchemaStmt = db.prepare(
   'SELECT id, schema_id, name, action, actor, created_at, extra FROM schema_audit WHERE schema_id = ? ORDER BY created_at DESC, id DESC'
 );
+const selectAuditSummariesStmt = db.prepare(`
+  SELECT a.schema_id,
+         a.name,
+         a.action,
+         a.actor,
+         a.created_at,
+         s.id AS current_id,
+         s.archived
+  FROM schema_audit a
+  LEFT JOIN schema_audit newer
+    ON a.schema_id = newer.schema_id
+   AND (a.created_at < newer.created_at OR (a.created_at = newer.created_at AND a.id < newer.id))
+  LEFT JOIN schemas s ON s.id = a.schema_id
+  WHERE a.schema_id IS NOT NULL AND newer.schema_id IS NULL
+  ORDER BY a.created_at DESC, a.id DESC
+`);
 
 const getUserByUsernameStmt = db.prepare(
   'SELECT id, username, password_hash, created_at FROM users WHERE LOWER(username) = LOWER(?)'
@@ -385,6 +401,24 @@ app.get(`${API_PREFIX}/schemas/:id`, (req, res) => {
   });
 });
 
+app.get(`${API_PREFIX}/schema-audit/summaries`, requireAuth, (req, res) => {
+  if (!isBootstrapUserAccount(req.user)) {
+    res.status(403).json({ error: 'Acces reserve au compte bootstrap' });
+    return;
+  }
+  const rows = selectAuditSummariesStmt.all();
+  const items = rows.map((row) => ({
+    schema_id: row.schema_id,
+    name: row.name,
+    action: row.action,
+    actor: row.actor,
+    created_at: row.created_at,
+    exists: Boolean(row.current_id),
+    archived: Boolean(row.archived)
+  }));
+  res.json({ items });
+});
+
 app.get(`${API_PREFIX}/schemas/:id/audit`, requireAuth, (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
@@ -570,12 +604,19 @@ app.delete(`${API_PREFIX}/schemas/:id`, requireAuth, (req, res) => {
     res.status(404).json({ error: 'Schema introuvable' });
     return;
   }
+  let payloadSnapshot = null;
+  try {
+    payloadSnapshot = target.payload ? JSON.parse(target.payload) : null;
+  } catch (err) {
+    payloadSnapshot = null;
+  }
   deleteSchemaStmt.run(id);
   recordSchemaAudit({
     schemaId: id,
     name: target.name,
     action: 'delete',
-    actor: req.user?.username || null
+    actor: req.user?.username || null,
+    extra: payloadSnapshot ? { payload: payloadSnapshot } : null
   });
   res.status(204).end();
 });

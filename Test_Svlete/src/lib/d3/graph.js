@@ -693,8 +693,20 @@ export function renderGraph(svgEl, ctx) {
 
   /* ---------- rendu final / cleanup ---------- */
   if (drawn === 0) {
-    svg.append('text').attr('x',32).attr('y',96).attr('fill',pal.cTextMuted).attr('font-size',14)
-      .text('Aucune option Ã  afficher. Ajoutez une option dans un groupe ou un sous-groupe.');
+    const rect = svgEl?.getBoundingClientRect?.() || { width: 0, height: 0 };
+    const width = rect.width || svgEl?.clientWidth || 0;
+    const height = rect.height || svgEl?.clientHeight || 0;
+    const centerX = width > 0 ? width / 2 : 280;
+    const centerY = height > 0 ? height / 2 : 140;
+    svg.append('text')
+      .attr('x', centerX)
+      .attr('y', centerY)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('fill', pal.cTextMuted)
+      .attr('font-size', 15)
+      .attr('font-weight', 600)
+      .text('Aucune option à afficher. Ajoutez une option dans un groupe ou un sous-groupe.');
   } else {
     if (preserveZoom && st.transform) { svg.call(zoom.transform, st.transform); }
     else { setTimeout(recenter, 0); }
