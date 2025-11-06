@@ -7,7 +7,8 @@
   via le menu burger et les toasts.
 -->
 <script>
-  import { onMount, tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
+import { get } from 'svelte/store';
 import {
     mode,
     theme,
@@ -79,6 +80,25 @@ import {
   let creatingUser = false;
   let archivingActive = false;
   let restoringId = null;
+  let showUnsavedSelectionWarning = false;
+  let pendingSchemaAction = null;
+  let pendingSchemaTarget = '';
+  let currentSelectionSize = 0;
+
+  const unsubscribeSelected = selected.subscribe((value) => {
+    let size = 0;
+    if (value instanceof Set) {
+      size = value.size;
+    } else if (Array.isArray(value)) {
+      size = value.length;
+    } else if (value && typeof value === 'object') {
+      if (typeof value.size === 'number') size = value.size;
+      else if (typeof value.length === 'number') size = value.length;
+    } else if (value) {
+      size = 1;
+    }
+    currentSelectionSize = size;
+  });
 
   function handleToggleRgbMode() {
     const next = !$rgbMode;
@@ -202,6 +222,53 @@ import {
     schemaDirty = true;
   }
 
+  function shouldWarnUnsavedSelections() {
+    return get(mode) === 'configurateur' && currentSelectionSize > 0;
+  }
+
+  function promptSchemaChange(action, targetName = '') {
+    if (!shouldWarnUnsavedSelections()) {
+      action?.();
+      return;
+    }
+    pendingSchemaAction = action;
+    pendingSchemaTarget = targetName;
+    showUnsavedSelectionWarning = true;
+  }
+
+  function cancelSchemaChangeWarning() {
+    showUnsavedSelectionWarning = false;
+    pendingSchemaAction = null;
+    pendingSchemaTarget = '';
+    selectedSchemaId = $activeSchema?.id ? String($activeSchema.id) : '';
+  }
+
+  function confirmSchemaChangeWarning() {
+    showUnsavedSelectionWarning = false;
+    const action = pendingSchemaAction;
+    pendingSchemaAction = null;
+    pendingSchemaTarget = '';
+    selected.set(new Set());
+    action?.();
+  }
+
+  function handleStoreSelectionAndProceed() {
+    if (!pendingSchemaAction) return;
+    try {
+      storeCurrentSelectionSnapshot();
+      toastSuccess('Selection stockee.');
+    } catch (err) {
+      toastError(err?.message || 'Impossible de stocker la selection.');
+      return;
+    }
+    selected.set(new Set());
+    showUnsavedSelectionWarning = false;
+    const action = pendingSchemaAction;
+    pendingSchemaAction = null;
+    pendingSchemaTarget = '';
+    action?.();
+  }
+
   async function handleSaveSchema() {
     if (!canEdit) {
       toastError('Connexion requise pour enregistrer.');
@@ -238,18 +305,27 @@ import {
     }
   }
 
-  async function handleSelectSchema(event) {
+  function handleSelectSchema(event) {
     const value = event.currentTarget.value;
     if (!value) return;
-    loadingSchema = true;
-    try {
-      await loadSchemaFromDatabase(Number(value));
-      schemaDirty = false;
-      schemaName = $activeSchema?.name || schemaName;
-    } catch (err) {
-      toastError(err?.message || 'Échec du chargement du schéma.');
-    } finally {
-      loadingSchema = false;
+    const schemaId = Number(value);
+    const schemaLabel =
+      $savedSchemas.find((item) => Number(item.id) === schemaId)?.name || '';
+    const action = async () => {
+      loadingSchema = true;
+      try {
+        await loadSchemaFromDatabase(schemaId);
+        schemaDirty = false;
+        schemaName = $activeSchema?.name || schemaName;
+      } catch (err) {
+        toastError(err?.message || 'Échec du chargement du schéma.');
+      } finally {
+        loadingSchema = false;
+      }
+    };
+    promptSchemaChange(action, schemaLabel);
+    if (shouldWarnUnsavedSelections()) {
+      selectedSchemaId = $activeSchema?.id ? String($activeSchema.id) : '';
     }
   }
 
@@ -356,19 +432,22 @@ import {
     }
   }
 
-  async function handleLoadArchived(schema) {
+  function handleLoadArchived(schema) {
     if (!schema?.id) return;
-    loadingSchema = true;
-    try {
-      await loadSchemaFromDatabase(Number(schema.id));
-      schemaDirty = false;
-      schemaName = $activeSchema?.name || schemaName;
-      toastInfo(`Schema "${schema.name}" charge (archive).`);
-    } catch (err) {
-      toastError(err?.message || 'Chargement du schema archive impossible.');
-    } finally {
-      loadingSchema = false;
-    }
+    const action = async () => {
+      loadingSchema = true;
+      try {
+        await loadSchemaFromDatabase(Number(schema.id));
+        schemaDirty = false;
+        schemaName = $activeSchema?.name || schemaName;
+        toastInfo(`Schema "${schema.name}" charge (archive).`);
+      } catch (err) {
+        toastError(err?.message || 'Chargement du schema archive impossible.');
+      } finally {
+        loadingSchema = false;
+      }
+    };
+    promptSchemaChange(action, schema?.name || '');
   }
 
   function handleGroupFilter(event) {
@@ -492,6 +571,10 @@ import {
     };
   });
 
+  onDestroy(() => {
+    unsubscribeSelected?.();
+  });
+
   function handleSearchInput(event) {
     const value = event.currentTarget.value;
     searchValue = value;
@@ -514,7 +597,7 @@ import {
   }
 
   const gammeOptions = ['Smart', 'Mod', 'Evo'];
-  $: selectionCount = $selected ? ($selected.size || ($selected.length ?? 0)) : 0;
+  $: selectionCount = currentSelectionSize;
   $: storedSelectionsCount = Array.isArray($storedSelections) ? $storedSelections.length : 0;
 
   $: groupOptions = Object.keys($grouped || {}).sort((a, b) =>
@@ -917,7 +1000,68 @@ import {
     </div>
   </aside>
 </div>
+
+{#if showUnsavedSelectionWarning}
+  <div class="confirm-backdrop" role="alertdialog" aria-modal="true" aria-live="assertive">
+    <div class="confirm-panel">
+      <h3>Selection non stockee</h3>
+      <p>
+        Vous avez des options selectionnees qui ne sont pas stockees.
+        {#if pendingSchemaTarget}
+          Voulez-vous les conserver avant de charger "{pendingSchemaTarget}" ?
+        {:else}
+          Voulez-vous les conserver avant de changer de schema ?
+        {/if}
+      </p>
+      <div class="confirm-actions">
+        <button class="btn btn-sm primary" type="button" on:click={handleStoreSelectionAndProceed}>
+          Stocker la selection
+        </button>
+        <button class="btn btn-sm danger" type="button" on:click={confirmSchemaChangeWarning}>
+          Passer au schema
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
+  .confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+    padding: 16px;
+  }
+  .confirm-panel {
+    width: min(360px, 90vw);
+    background: var(--panel-bg, #fff);
+    color: var(--text-color, #0f172a);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .confirm-panel h3 {
+    margin: 0;
+    font-size: 18px;
+  }
+  .confirm-panel p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--c-text-muted, #64748b);
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
   .topbar {
     padding:10px 14px;
     background: var(--panel-bg, #f7f8fa);
@@ -1277,6 +1421,7 @@ import {
   }
   .btn-sm { min-height:32px; padding:0 12px; font-size:12px; }
   .btn.primary { background:#2563eb; color:#fff; border-color:#1d4ed8; }
+  .btn.danger { background:#dc2626; color:#fff; border-color:#b91c1c; }
   .btn[disabled] { cursor:not-allowed; opacity:.6; }
   .btn-link {
     border:none;
