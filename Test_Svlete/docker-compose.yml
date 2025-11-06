@@ -11,3 +11,9 @@ services:
       - BOOTSTRAP_USERNAME=${BOOTSTRAP_USERNAME}
       - BOOTSTRAP_PASSWORD=${BOOTSTRAP_PASSWORD}
     restart: unless-stopped
+    volumes:
+      - schemas_data:/app/data
+
+volumes:
+  schemas_data:
+    name: graphcond_schemas_data
